@@ -32,10 +32,10 @@ class CopyProcessRestartIntegrationTest {
         compose.waitUntil(15_000) { compose.onAllNodesWithTag("recovery-warning").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("home-list").performScrollToNode(hasTestTag("open-chinese"))
         compose.onNodeWithTag("open-chinese").performClick()
-        scroll(hasTestTag("mode-copy")); compose.onNodeWithTag("mode-copy").performClick()
-        scroll(hasTestTag("export-copy")); compose.onNodeWithTag("export-copy").assertIsEnabled()
-        scroll(hasTestTag("mode-direct")); compose.onNodeWithTag("mode-direct").performClick()
+        compose.onNodeWithTag("mode-copy").assertDoesNotExist()
+        compose.onNodeWithTag("export-copy").assertDoesNotExist()
         scroll(hasTestTag("switch-chinese")); compose.onNodeWithTag("switch-chinese").assertIsNotEnabled()
+        compose.onNodeWithTag("switch-english").assertIsNotEnabled()
         assertEquals(pending, FileOperationJournal(File(root, "pending.json"), AndroidAtomicWriter()).load())
     }
     private fun scroll(matcher: SemanticsMatcher) { compose.onNodeWithTag("validation-list").performScrollToNode(matcher) }

@@ -8,6 +8,20 @@ class ConfigProcessorTest {
     private val processor = ConfigProcessor()
     private fun bytes(text: String) = text.toByteArray(Charsets.UTF_8)
 
+    @Test fun englishSwitchPreservesRealGameSettingsAndRejectsWrongTargetOrOtherChanges() {
+        val original = javaClass.classLoader!!.getResourceAsStream("config.json")!!.use { it.readBytes() }
+        val output = processor.languageCandidate(original, Language.ENGLISH)
+        processor.verifyLanguage(original, output, Language.ENGLISH)
+        assertEquals("1", processor.inspect(output).languageNumber)
+        assertArrayEquals(output, processor.languageCandidate(output, Language.ENGLISH))
+        val chinese = processor.languageCandidate(output, Language.CHINESE)
+        assertEquals(processor.inspect(original).root, processor.inspect(chinese).root)
+        assertThrows(ToolException::class.java) { processor.verifyLanguage(original, output, Language.CHINESE) }
+        assertThrows(ToolException::class.java) {
+            processor.verifyLanguage(bytes("{\"Language\":7,\"volume\":0.5}"), bytes("{\"Language\":1,\"volume\":1}"), Language.ENGLISH)
+        }
+    }
+
     @Test fun realSampleAndEnglishCopyPreserveEveryOtherField() {
         val sample = javaClass.classLoader!!.getResourceAsStream("config.json")!!.use { it.readBytes() }
         assertEquals(Language.CHINESE, processor.inspect(sample).language)

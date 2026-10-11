@@ -20,7 +20,7 @@ class Version12UpgradeIntegrationTest {
     @Test fun oldShellSessionBackupsAndPendingSurviveUpgradeAndCanExportWithoutClearingRecovery() {
         assumeTrue(InstrumentationRegistry.getArguments().getString("version12Upgrade") == "true")
         val context = compose.activity
-        assertEquals("1.2", context.packageManager.getPackageInfo(context.packageName, 0).versionName)
+        assertEquals("1.3", context.packageManager.getPackageInfo(context.packageName, 0).versionName)
         val root = File(context.noBackupFilesDir, "validation")
         val atomic = AndroidAtomicWriter()
         val source = SessionStore(root, atomic).source()!!

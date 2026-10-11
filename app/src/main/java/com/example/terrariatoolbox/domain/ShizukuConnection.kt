@@ -7,13 +7,14 @@ enum class ShizukuPhase { NOT_INSTALLED, NOT_RUNNING, NEEDS_PERMISSION, DENIED, 
 data class ShizukuState(
     val phase: ShizukuPhase = ShizukuPhase.NOT_INSTALLED,
     val installedVersion: String? = null, val apiVersion: Int? = null, val uid: Int? = null,
-    val message: String = "未安装 Shizuku，请先查看启动说明。",
+    val message: String = "还没有安装 Shizuku，请先按下方说明安装。",
 )
 data class ShizukuEnvironment(val installedVersion: String?, val running: Boolean, val api: Int? = null,
     val uid: Int? = null, val granted: Boolean = false, val denied: Boolean = false, val mainUser: Boolean = true)
 data class TargetProbe(val path: String, val uid: Int, val size: Long, val writable: Boolean)
 interface RemoteConfigFiles {
     val alive: Boolean
+    fun saves(): RemoteSaveFiles = throw ToolException("请重新连接 Shizuku 后使用存档管理。")
     fun probe(): TargetProbe
     fun read(): ByteArray
     fun overwrite(bytes: ByteArray, expectedBeforeHash: String)
@@ -56,7 +57,7 @@ class ShizukuConnection(private val runtime: ShizukuRuntime,
             env.installedVersion == null -> base
             !env.running -> base.copy(phase = ShizukuPhase.NOT_RUNNING, message = "Shizuku 未启动。请通过无线调试启动后返回。")
             !env.mainUser || env.uid != 2000 || (env.api ?: 0) < 13 -> base.copy(phase = ShizukuPhase.UNSUPPORTED,
-                message = "本版仅验证主用户、Shizuku API 13+ 和无线调试 shell UID 2000。")
+                message = "当前 Shizuku 启动方式暂不支持。请更新 Shizuku，在手机主用户中通过无线调试启动。")
             !env.granted -> base.copy(phase = if (env.denied) ShizukuPhase.DENIED else ShizukuPhase.NEEDS_PERMISSION,
                 message = if (env.denied) "Shizuku 授权被拒绝，请在 Shizuku 中调整授权后重试。" else "Shizuku 已启动，点击连接以授权工具箱。")
             else -> null
@@ -68,7 +69,7 @@ class ShizukuConnection(private val runtime: ShizukuRuntime,
         val unavailable = unavailable(env)
         if (unavailable != null) { release(); mutable.value = unavailable }
         else if (remote?.alive != true && mutable.value.phase != ShizukuPhase.CONNECTING) {
-            mutable.value = ShizukuState(ShizukuPhase.DISCONNECTED, env.installedVersion, env.api, env.uid, "已授权，请连接 Shizuku 文件服务。")
+            mutable.value = ShizukuState(ShizukuPhase.DISCONNECTED, env.installedVersion, env.api, env.uid, "已获得授权，点击「连接 Shizuku」即可继续。")
         }
     }
     fun connect(askPermission: Boolean = true) {
@@ -87,10 +88,10 @@ class ShizukuConnection(private val runtime: ShizukuRuntime,
         if (mutable.value.phase == ShizukuPhase.CONNECTING) return
         release()
         val attempt = generation
-        mutable.value = ShizukuState(ShizukuPhase.CONNECTING, env.installedVersion, env.api, env.uid, "正在连接 Shizuku 文件服务…")
+        mutable.value = ShizukuState(ShizukuPhase.CONNECTING, env.installedVersion, env.api, env.uid, "正在连接 Shizuku…")
         timeout = scheduleTimeout {
             if (attempt == generation && !closed) {
-                release(); mutable.value = mutable.value.copy(phase = ShizukuPhase.TIMED_OUT, message = "连接超过 10 秒，已释放连接。请确认 Shizuku 已启动后重试。")
+                release(); mutable.value = mutable.value.copy(phase = ShizukuPhase.TIMED_OUT, message = "连接超时，请打开 Shizuku 确认已启动，再回来重试。")
             }
         }
         try {
@@ -98,7 +99,7 @@ class ShizukuConnection(private val runtime: ShizukuRuntime,
                 if (attempt == generation && !closed) {
                     timeout?.cancel(); timeout = null
                     remote = service
-                    mutable.value = mutable.value.copy(phase = ShizukuPhase.CONNECTED, message = "文件服务已连接；读取和写回能力仍需实际验证。")
+                    mutable.value = mutable.value.copy(phase = ShizukuPhase.CONNECTED, message = "Shizuku 已连接。")
                 }
             }, { if (attempt == generation && !closed) disconnected() })
         } catch (_: Exception) { disconnected() }

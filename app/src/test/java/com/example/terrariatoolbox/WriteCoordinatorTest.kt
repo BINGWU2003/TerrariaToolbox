@@ -63,6 +63,36 @@ class WriteCoordinatorTest {
     private val processor = ConfigProcessor()
     private val coordinator = WriteCoordinator(documents, backups, journal, processor) { 99 }
 
+    @Test fun englishSwitchBacksUpChineseAndPreservesSettingsWithNoRepeatedWrite() {
+        documents.bytes = " {\"Language\":7,\"volume\":0.25,\"keys\":[2,1],\"unknown\":{\"Language\":7}} ".toByteArray()
+        val original = documents.bytes.copyOf()
+        val result = coordinator.switchLanguage(source, Language.ENGLISH)
+        assertTrue(result.changed)
+        processor.verifyLanguage(original, documents.bytes, Language.ENGLISH)
+        assertArrayEquals(original, backups.read(result.backup!!))
+        assertEquals("切换英文前", result.backup.reason)
+        assertNull(journal.pending)
+        assertFalse(coordinator.switchLanguage(source, Language.ENGLISH).changed)
+        assertEquals(1, documents.writes)
+        assertEquals(1, backups.entries.size)
+        coordinator.restore(source, result.backup)
+        assertArrayEquals(original, documents.bytes)
+    }
+
+    @Test fun failedEnglishWriteBlocksBothDirectionsAndCanRecoverChineseOriginal() {
+        documents.bytes = "{\"Language\":7,\"volume\":0.5}".toByteArray()
+        val original = documents.bytes.copyOf()
+        documents.failWrite = true
+        assertTrue(assertThrows(ToolException::class.java) { coordinator.switchLanguage(source, Language.ENGLISH) }.needsRecovery)
+        assertNotNull(journal.pending)
+        assertThrows(ToolException::class.java) { coordinator.switchLanguage(source, Language.ENGLISH) }
+        assertThrows(ToolException::class.java) { coordinator.switchToChinese(source) }
+        documents.failWrite = false
+        coordinator.restore(source, backups.list().first())
+        assertArrayEquals(original, documents.bytes)
+        assertNull(journal.pending)
+    }
+
     @Test fun successfulSwitchBacksUpOriginalAndVerifiesSameTarget() {
         val original = documents.bytes.copyOf()
         val result = coordinator.switchToChinese(source)

@@ -84,12 +84,13 @@ class ShizukuConnectionTest {
         assertThrows(WriteNotStartedException::class.java) { connection.files() }
         connection.check(); assertEquals(ShizukuPhase.NEEDS_PERMISSION, connection.state.value.phase)
     }
-    @Test fun sourceRequiresExactServiceIdentityAndDoesNotInheritConfirmation() {
+    @Test fun sourceIsConfirmedOnlyAfterExactServiceIdentityAndPathAreValidated() {
         connect(); val access = ShizukuDocumentAccess(connection)
         val source = access.select()
-        assertFalse(source.confirmed); assertFalse(source.persisted)
+        assertTrue(source.confirmed); assertFalse(source.persisted)
         assertEquals(AccessMethod.SHIZUKU, source.accessMethod)
         assertTrue(access.refresh(source.copy(confirmed = true)).confirmed)
+        assertTrue(access.refresh(source.copy(confirmed = false)).confirmed)
         runtime.probe = runtime.probe.copy(uid = 0)
         assertThrows(ToolException::class.java) { access.select() }
         runtime.probe = runtime.probe.copy(uid = 2000, path = "/another/config.json")

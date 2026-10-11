@@ -11,30 +11,33 @@ import org.junit.Test
 class ShizukuUiIntegrationTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
     @DedicatedFixture
-    @Test fun genuineShizukuPageConfirmsSourceSwitchesAndRestores() {
+    @Test fun genuineShizukuHomeConnectsAndToolSwitchesBothDirectionsThenRestores() {
         assumeTrue(InstrumentationRegistry.getArguments().getString("shizukuFixture") == "true")
-        compose.onNodeWithTag("open-chinese").performClick()
-        scroll(hasTestTag("connect-shizuku"))
+        compose.onNodeWithTag("home-list").performScrollToNode(hasTestTag("connect-shizuku"))
         compose.waitUntil(15_000) { compose.onAllNodes(hasTestTag("connect-shizuku") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("connect-shizuku").performClick()
-        waitResult("Shizuku 读取成功")
-        scroll(hasText("确认这是游戏原配置"))
-        compose.onNodeWithText("确认这是游戏原配置").performClick()
-        compose.onNodeWithText("确认来源").performClick()
-        waitResult("已确认这是游戏原配置")
+        compose.onNodeWithTag("home-list").performScrollToNode(hasTestTag("operation-result"))
+        compose.waitUntil(20_000) { compose.onAllNodes(hasTestTag("operation-result") and hasText("已连接，当前游戏语言", substring = true)).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("home-list").performScrollToNode(hasTestTag("open-chinese"))
+        compose.onNodeWithTag("open-chinese").performClick()
         scroll(hasTestTag("switch-chinese"))
         compose.onNodeWithTag("switch-chinese").assertIsEnabled().performClick()
-        compose.onNodeWithText("已退出，开始验证").performClick()
-        waitResult("配置已保存并回读校验")
+        compose.onNodeWithText("已退出游戏，切换到中文").performClick()
+        waitResult("已切换为中文")
         scroll(hasTestTag("switch-chinese"))
         compose.onNodeWithTag("switch-chinese").assertIsNotEnabled()
+        scroll(hasTestTag("switch-english")); compose.onNodeWithTag("switch-english").performClick()
+        compose.onNodeWithText("已退出游戏，切换到英文").performClick()
+        waitResult("已切换为英文")
+        scroll(hasTestTag("switch-english")); compose.onNodeWithTag("switch-english").assertIsNotEnabled()
+        scroll(hasTestTag("more-actions")); compose.onNodeWithTag("more-actions").performClick()
         scroll(hasTestTag("open-backups")); compose.onNodeWithTag("open-backups").performClick()
-        scroll(hasText("完整恢复"))
-        compose.onAllNodesWithText("完整恢复").filter(isEnabled()).onFirst().performClick()
-        compose.onNodeWithText("已退出，完整恢复").performClick()
-        waitResult("已恢复游戏配置并逐字节校验")
+        scroll(hasText("恢复这份备份"))
+        compose.onAllNodesWithText("恢复这份备份").filter(isEnabled()).onFirst().performClick()
+        compose.onNodeWithText("已退出游戏，恢复备份").performClick()
+        waitResult("已恢复备份")
         compose.onNodeWithTag("navigate-back").performClick()
-        scroll(hasTestTag("switch-chinese")); compose.onNodeWithTag("switch-chinese").assertIsEnabled()
+        scroll(hasTestTag("switch-english")); compose.onNodeWithTag("switch-english").assertIsEnabled()
     }
     private fun scroll(matcher: SemanticsMatcher) { compose.onNodeWithTag("validation-list").performScrollToNode(matcher) }
     private fun waitResult(text: String) {

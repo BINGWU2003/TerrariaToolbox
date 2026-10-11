@@ -7,6 +7,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.terrariatoolbox.data.*
 import com.example.terrariatoolbox.domain.*
+import com.example.terrariatoolbox.feature.saves.SaveManager
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -30,16 +31,12 @@ data class ValidationState(
     val notes: EnvironmentNotes = EnvironmentNotes(),
     val events: List<String> = emptyList(),
     val busy: Boolean = false,
-    val message: String = "请选择直接切换或导入配置副本。",
+    val message: String = "连接 Shizuku 后，即可切换游戏语言。",
     val shizuku: ShizukuState = ShizukuState(),
-    val workspace: CopyWorkspace? = null,
-    val copyConfig: ConfigDocument? = null,
-    val copyError: String? = null,
-    val importAwaiting: SourceInfo? = null,
 )
 
 data class ExportSpec(val name: String, val mime: String)
-private data class ExportRequest(val spec: ExportSpec, val bytes: ByteArray, val success: String, val protectedUris: List<String>, val copy: Boolean = false)
+private data class ExportRequest(val spec: ExportSpec, val bytes: ByteArray, val success: String, val protectedUris: List<String>)
 
 class ValidationViewModel(application: Application) : AndroidViewModel(application) {
     private val root = File(application.noBackupFilesDir, "validation")
@@ -47,6 +44,7 @@ class ValidationViewModel(application: Application) : AndroidViewModel(applicati
     private val session = SessionStore(root, writer)
     private val saf = SafDocumentAccess(application)
     private val connection = createShizukuConnection(application)
+    val saves = SaveManager(application, { connection.files().saves() }, viewModelScope)
     private val shizuku = ShizukuDocumentAccess(connection)
     private val documents = RoutingDocumentAccess(saf, shizuku)
     private val processor = ConfigProcessor()
@@ -54,13 +52,11 @@ class ValidationViewModel(application: Application) : AndroidViewModel(applicati
     private val journal = FileOperationJournal(File(root, "pending.json"), writer)
     private val coordinator = WriteCoordinator(documents, backups, journal, processor)
     private val workspaceStore = CopyWorkspaceStore(File(application.noBackupFilesDir, "copy-workspace"), writer)
-    private val copies = CopyCoordinator(workspaceStore, documents, backups, coordinator, processor)
     private val mutex = Mutex()
     private val mutableState = MutableStateFlow(ValidationState())
     val state: StateFlow<ValidationState> = mutableState
     private var exportRequest: ExportRequest? = null
     private var pendingShizukuSelection = false
-    private var preparedImport: PreparedCopyImport? = null
 
     val environment: String = "${Build.MANUFACTURER} ${Build.MODEL}\nAndroid ${Build.VERSION.RELEASE} · API ${Build.VERSION.SDK_INT}" +
         "\n安全补丁：${Build.VERSION.SECURITY_PATCH}\n应用版本：${application.packageManager.getPackageInfo(application.packageName, 0).versionName}" +
@@ -85,13 +81,13 @@ class ValidationViewModel(application: Application) : AndroidViewModel(applicati
                 }
             }
         }
-        task("重新检查授权", after = { if (state.value.source?.accessMethod == AccessMethod.SHIZUKU) connection.connect(false) }) {
+        task("检查连接", after = { if (state.value.source?.accessMethod == AccessMethod.SHIZUKU) connection.connect(false) }) {
             val selected = session.source()
             if (selected == null) {
-                if (workspaceStore.load() != null) "已加载上次编辑副本。导入导出无需启动 Shizuku，仍需手动替换游戏配置。"
-                else "请连接 Shizuku 读取游戏配置，或导入可访问的配置副本。"
+                "连接 Shizuku 后，即可切换游戏语言。"
             }
-            else "已重新检查保存的授权和目标内容。历史验证不代表本次游戏已生效。"
+            else if (selected.accessMethod == AccessMethod.SHIZUKU) "已找到上次使用的游戏设置，请查看首页的 Shizuku 连接状态。"
+            else "请在首页连接 Shizuku。旧版本的备份仍可在「更多操作」中导出。"
         }
     }
 
@@ -104,14 +100,16 @@ class ValidationViewModel(application: Application) : AndroidViewModel(applicati
     private fun readShizukuSelection() {
         if (state.value.busy || !pendingShizukuSelection) return
         pendingShizukuSelection = false
-        task("Shizuku 读取配置") {
-            val source = shizuku.select()
+        task("读取游戏设置") {
+            val source = try { shizuku.select() } catch (error: ToolException) {
+                return@task "Shizuku 已连接，可以进入「存档管理」。游戏语言暂时无法读取：${error.userMessage}"
+            }
             ensureSelectionAllowed(source)
             val previous = session.source()
             session.saveSource(if (previous?.identity == source.identity && previous.accessMethod == source.accessMethod)
-                source.copy(confirmed = previous.confirmed, lastVerifiedAt = previous.lastVerifiedAt) else source)
+                source.copy(lastVerifiedAt = previous.lastVerifiedAt) else source)
             val parsed = processor.inspect(documents.read(source.uri))
-            "Shizuku 读取成功：${parsed.languageLabel}。请核对实际路径并确认来源；读取成功不代表写回已验证。"
+            "已连接，当前游戏语言：${parsed.languageLabel}。可以进入「游戏语言」进行切换。"
         }
     }
     fun onForeground() {
@@ -131,111 +129,48 @@ class ValidationViewModel(application: Application) : AndroidViewModel(applicati
         AccessMethod.SHIZUKU -> shizuku.refresh(source)
     }
 
-    fun selected(uri: Uri?, flags: Int, directory: Boolean) {
-        if (uri == null) { cancelled("授权"); return }
-        task("${if (directory) "目录" else "文件"}授权") {
-            val source = saf.select(uri, flags, directory)
-            ensureSelectionAllowed(source)
-            session.saveSource(source)
-            val parsed = processor.inspect(saf.read(source.uri))
-            "读取成功：${parsed.languageLabel}。${if (source.persisted) "已取得持久读取授权。" else "授权未持久保存，重启后可能需重新授权。"}" +
-                if (!source.knownTarget) " 此来源无法确认为游戏原配置，只开放读取和原始备份导出。" else " 请核对实际来源并确认。"
+    fun refresh() = task("刷新游戏设置") {
+        if (session.source()?.accessMethod != AccessMethod.SHIZUKU) "请先在首页连接 Shizuku。"
+        else {
+            val source = requireShizukuSource()
+            val parsed = processor.inspect(documents.read(source.uri))
+            "已刷新，当前游戏语言：${parsed.languageLabel}。"
         }
     }
 
-    fun confirmSource() = task("确认实际来源") {
-        val source = requireSource()
-        if (!source.knownTarget) throw ToolException("提供方无法证明这是目标目录中的原配置，只允许读取。")
-        session.saveSource(source.copy(confirmed = true))
-        "已确认这是游戏原配置。写权限仍需实际写回验证。"
-    }
+    fun switchToChinese() = switchLanguage(Language.CHINESE)
+    fun switchToEnglish() = switchLanguage(Language.ENGLISH)
 
-    fun refresh() = task("刷新目标") { "已重新读取目标。请查看最新语言和授权状态。" }
-
-    fun switchToChinese() = task("验证并切换中文") {
-        val source = requireSource()
-        val result = coordinator.switchToChinese(source)
-        if (!result.changed) "配置已设为中文，未备份、未写入。本次不构成写回能力验证。"
+    private fun switchLanguage(target: Language) = task("切换到${if (target == Language.CHINESE) "中文" else "英文"}") {
+        val source = requireShizukuSource()
+        val result = coordinator.switchLanguage(source, target)
+        val label = if (target == Language.CHINESE) "中文" else "英文"
+        if (!result.changed) "当前已经是$label，无需再次切换。"
         else {
             session.saveSource(source.copy(lastVerifiedAt = result.verifiedAt))
-            "配置已保存并回读校验，请启动游戏确认中文显示。游戏实际生效尚待验证。"
+            "已切换为$label，重新打开游戏即可生效。原来的设置已自动备份。"
         }
     }
 
-    fun restore(record: BackupRecord) = task("完整恢复配置") {
-        val source = requireSource()
+    fun restore(record: BackupRecord) = task("恢复备份") {
+        val source = requireShizukuSource()
         val result = coordinator.restore(source, record)
         session.saveSource(source.copy(lastVerifiedAt = result.verifiedAt))
-        "已恢复游戏配置并逐字节校验，请启动游戏确认。"
+        "已恢复备份，语言、音量和按键等设置已一起还原。现在可以重新打开游戏。"
     }
 
-    fun verifyPending() = task("校验未完成操作") {
-        val source = requireSource()
+    fun verifyPending() = task("检查上次操作") {
+        val source = requireShizukuSource()
         val result = coordinator.verifyPending(source)
         session.saveSource(source.copy(lastVerifiedAt = result.verifiedAt))
-        "目标与上次预期结果一致，回读校验已完成。请启动游戏确认。"
+        "上次操作已完成，游戏设置检查正常。现在可以重新打开游戏。"
     }
 
-    fun saveOriginalBackup() = task("保存原始备份") {
-        val source = requireSource()
+    fun saveOriginalBackup() = task("备份当前设置") {
+        val source = requireShizukuSource()
         val bytes = documents.read(source.uri)
         backups.save(source, bytes, "用户主动备份", runCatching { processor.inspect(bytes) }.getOrNull())
-        "原始字节备份已保存并回读校验。卸载应用或清除数据会丢失内部备份，请及时导出。"
-    }
-
-    fun importSelected(uri: Uri?, flags: Int) {
-        if (uri == null) { task("取消导入") { "已取消导入，当前副本未改变。" }; return }
-        task("读取导入副本") { stageImport(saf.importSource(uri, flags)) }
-    }
-
-    fun importLegacySource() = task("导入为副本") {
-        val source = session.source() ?: throw ToolException("请先选择可读取的配置。")
-        stageImport(source)
-    }
-
-    private fun stageImport(source: SourceInfo): String {
-        preparedImport = null
-        val prepared = copies.prepareImport(source)
-        return if (prepared.previousId == null) {
-            copies.import(prepared)
-            "配置副本已导入，源文件未修改。生成和恢复仅操作应用内副本。"
-        } else {
-            preparedImport = prepared
-            "配置有效，请确认是否替换当前编辑副本。"
-        }
-    }
-
-    fun confirmImport() = task("替换编辑副本") {
-        val prepared = preparedImport ?: throw ToolException("导入任务已失效，请重新选择。")
-        copies.import(prepared)
-        preparedImport = null
-        "新配置副本已导入，原编辑副本已备份；导入源文件未修改。"
-    }
-
-    fun cancelImport() = task("取消替换副本") {
-        preparedImport = null
-        "已取消导入，当前副本未改变。"
-    }
-
-    fun saveCopyBackup() = task("备份编辑副本") {
-        copies.saveBackup()
-        "副本原始字节备份已保存并回读校验。"
-    }
-
-    fun restoreCopy(record: BackupRecord) = task("恢复编辑副本") {
-        copies.restore(record)
-        "已恢复编辑副本并逐字节校验，尚未替换游戏配置。"
-    }
-
-    fun prepareCopyExport(ready: (ExportSpec) -> Unit) = task("生成并准备导出副本", after = {
-        exportRequest?.spec?.let(ready)
-    }) {
-        val workspace = copies.generateChinese()
-        val bytes = workspaceStore.read(workspace)
-        val spec = ExportSpec("config.json", "application/json")
-        exportRequest = ExportRequest(spec, bytes, "中文配置已导出，尚未替换游戏配置。请完全退出游戏，再用 MT 替换原文件。",
-            protectedUris() + workspace.source.uri, copy = true)
-        "中文编辑副本已准备好，尚未导出。请选择新的保存位置。"
+        "当前设置已备份。需要长期保留时，可在「恢复备份」中导出；卸载工具箱会删除本机备份。"
     }
 
     fun prepareBackupExport(record: BackupRecord, ready: (ExportSpec) -> Unit) = task("准备备份导出", after = {
@@ -243,11 +178,11 @@ class ValidationViewModel(application: Application) : AndroidViewModel(applicati
     }) {
         val bytes = backups.read(record)
         val spec = ExportSpec("config-original-${record.id.take(8)}.json", "application/json")
-        exportRequest = ExportRequest(spec, bytes, "原始备份已导出，尚未替换游戏配置。", protectedUris())
+        exportRequest = ExportRequest(spec, bytes, "备份已导出。", protectedUris())
         "请选择新的备份保存位置。"
     }
 
-    fun prepareReport(notes: EnvironmentNotes, ready: (ExportSpec) -> Unit) = task("准备验证记录", after = {
+    fun prepareReport(notes: EnvironmentNotes, ready: (ExportSpec) -> Unit) = task("准备问题记录", after = {
         exportRequest?.spec?.let(ready)
     }) {
         session.saveNotes(notes)
@@ -257,7 +192,6 @@ class ValidationViewModel(application: Application) : AndroidViewModel(applicati
             appendLine("记录时间：${formatTime(System.currentTimeMillis())}")
             appendLine(environment)
             appendLine("游戏发行版本：${notes.gameVersion.ifBlank { "待填写" }}")
-            appendLine("MT 版本：${notes.mtVersion.ifBlank { "待填写" }}")
             appendLine("授权入口：${source?.selection ?: "尚未授权"}")
             appendLine("文件提供方：${source?.authority ?: "未知"}")
             appendLine("访问方式：${source?.accessMethod ?: "尚未选择"}")
@@ -266,38 +200,33 @@ class ValidationViewModel(application: Application) : AndroidViewModel(applicati
             appendLine("Shizuku API：${status.apiVersion ?: "未知"}；服务 UID：${status.uid ?: "未知"}")
             appendLine("Shizuku 授权及连接：${status.phase}；${status.message}")
             appendLine("来源核验：${if (source?.knownTarget == true) TARGET_PATH else "无法确认游戏原文件位置"}")
-            appendLine("用户确认来源：${source?.confirmed == true}")
+            appendLine("自动识别游戏配置：${source?.knownTarget == true && source.confirmed}")
             appendLine(if (source?.accessMethod == AccessMethod.SHIZUKU) "Shizuku 重启要求：设备重启后需重新启动服务并检查授权。"
                 else "读取授权持久保存：${source?.persisted == true}")
             appendLine("历史写回回读通过时间：${source?.lastVerifiedAt?.let(::formatTime) ?: "尚未验证"}")
-            appendLine("游戏中文显示：需在当前设备人工确认，工具箱不自动检测")
+            appendLine("当前游戏语言：${state.value.config?.languageLabel ?: "未读取"}")
             appendLine("应用/设备重启后授权复用：待真机验证")
-            appendLine("MT 授权页面及实际范围：待人工核对")
             appendLine("支持范围：历史用户实测已记录；其他设备及版本需独立验收。")
-            val copy = runCatching { workspaceStore.load() }.getOrNull()
-            appendLine("编辑副本：${if (copy == null) "尚未导入" else "仅在应用内部保存，未自动替换游戏配置"}")
             appendLine("\n操作记录（不包含配置内容或配置中的用户标识）：")
             session.events().forEach { appendLine(it) }
         }
         val spec = ExportSpec("TerrariaToolbox-validation.txt", "text/plain")
-        exportRequest = ExportRequest(spec, report.toByteArray(Charsets.UTF_8), "验证记录已导出。", protectedUris())
-        "请选择验证记录的保存位置。"
+        exportRequest = ExportRequest(spec, report.toByteArray(Charsets.UTF_8), "问题记录已导出。", protectedUris())
+        "请选择问题记录的保存位置。"
     }
 
     fun exported(uri: Uri?) {
         val request = exportRequest
         exportRequest = null
         if (uri == null) {
-            task("取消导出") { if (request?.copy == true) "已取消导出，已生成的编辑副本和原始备份已保留，尚未替换游戏配置。"
-                else "已取消导出，未修改文件。" }
+            task("取消导出") { "已取消导出，备份仍保存在工具箱中。" }
             return
         }
         task("导出并回读校验") {
             if (request == null) throw ToolException("导出任务已失效，未写入文件，请重新导出。")
             coordinator.export(uri.toString(), request.bytes, (request.protectedUris + protectedUris()).distinct())
             val name = runCatching { saf.describe(uri).name }.getOrDefault("提供方未返回名称")
-            request.success + "\n实际名称：$name\n保存位置：$uri" +
-                if (request.spec.mime == "application/json" && name != "config.json") "\n手动替换游戏配置时，最终文件名必须为 config.json。" else ""
+            request.success + "\n文件名：$name"
         }
     }
 
@@ -310,8 +239,11 @@ class ValidationViewModel(application: Application) : AndroidViewModel(applicati
         "系统未提供此文件选择入口，请检查系统文件应用或尝试另一入口。"
     }
 
-    private fun requireSource(): SourceInfo = session.source()?.let { refreshSource(it) }
-        ?: throw ToolException("请先授权或选择配置文件。")
+    private fun requireShizukuSource(): SourceInfo {
+        val source = session.source() ?: throw ToolException("请先在首页连接 Shizuku。")
+        if (source.accessMethod != AccessMethod.SHIZUKU) throw ToolException("请先在首页连接 Shizuku。")
+        return shizuku.refresh(source)
+    }
     private fun protectedUris(): List<String> = backups.list().map { it.source.uri } +
         listOfNotNull(session.source()?.uri, runCatching { workspaceStore.load()?.source?.uri }.getOrNull()) + SHIZUKU_URI
 
@@ -319,7 +251,7 @@ class ValidationViewModel(application: Application) : AndroidViewModel(applicati
         val source = runCatching { session.source() }.getOrNull()
         var configError: String? = null
         var refreshed = source
-        val bytes = source?.let {
+        val bytes = source?.takeIf { it.accessMethod == AccessMethod.SHIZUKU }?.let {
             try {
                 refreshed = refreshSource(it)
                 documents.read(it.uri)
@@ -334,15 +266,9 @@ class ValidationViewModel(application: Application) : AndroidViewModel(applicati
         }
         var pendingError: String? = null
         val pending = try { journal.load() } catch (error: Exception) { pendingError = friendly(error); null }
-        var copyError: String? = null
-        val workspace = try { workspaceStore.load() } catch (error: Exception) { copyError = friendly(error); null }
-        val copyConfig = workspace?.let {
-            try { processor.inspect(workspaceStore.read(it)) } catch (error: Exception) { copyError = friendly(error); null }
-        }
         return ValidationState(refreshed, config, configError, pending, pendingError, backups.list(),
             runCatching { session.notes() }.getOrDefault(EnvironmentNotes()), runCatching { session.events() }.getOrDefault(emptyList()),
-            shizuku = connection.state.value, workspace = workspace, copyConfig = copyConfig, copyError = copyError,
-            importAwaiting = preparedImport?.source)
+            shizuku = connection.state.value)
     }
 
     private fun task(label: String, after: (() -> Unit)? = null, work: () -> String) {

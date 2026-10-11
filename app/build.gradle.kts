@@ -13,8 +13,8 @@ android {
         applicationId = "com.example.terrariatoolbox"
         minSdk = 34
         targetSdk = 37
-        versionCode = 3
-        versionName = "1.2"
+        versionCode = 5
+        versionName = "1.4"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // Opt-in tests require dedicated fixtures or a real v1.0 upgrade.
@@ -39,6 +39,9 @@ android {
         aidl = true
     }
     sourceSets.getByName("test").resources.srcDir("../docs")
+    sourceSets.getByName("main").assets.srcDir("../Masters Of Terraria")
+    // Package the supplied saves without bundling the path documentation.
+    androidResources.ignoreAssetsPattern = "path.md:!.svn:!.git:!CVS:!*.scc:.*:<dir>_*:!CVS:!thumbs.db:!picasa.ini:!*~"
 }
 
 dependencies {

@@ -5,6 +5,7 @@
     <queries>
         <package android:name="moe.shizuku.privileged.api" />
         <package android:name="com.and.games505.TerrariaPaid" />
+        <package android:name="com.xd.terraria" />
     </queries>
 
     <application

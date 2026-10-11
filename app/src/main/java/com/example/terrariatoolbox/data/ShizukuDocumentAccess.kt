@@ -17,11 +17,11 @@ class ShizukuDocumentAccess(private val connection: ShizukuConnection) : Documen
         val probe = connection.files().probe()
         if (probe.uid != 2000 || probe.path != TARGET_PATH) throw ToolException("Shizuku 服务身份或目标路径不匹配，禁止写入。")
         return SourceInfo(SHIZUKU_URI, SHIZUKU_URI, SHIZUKU_IDENTITY, "Shizuku shell UID 2000", TARGET_PATH,
-            "config.json", "Shizuku 授权", probe.writable, false, true, accessMethod = AccessMethod.SHIZUKU)
+            "config.json", "Shizuku 授权", probe.writable, false, true, confirmed = true, accessMethod = AccessMethod.SHIZUKU)
     }
     fun refresh(source: SourceInfo): SourceInfo {
         if (source.uri != SHIZUKU_URI || source.identity != SHIZUKU_IDENTITY || source.accessMethod != AccessMethod.SHIZUKU)
             throw ToolException("保存的 Shizuku 来源不匹配，请重新连接。")
-        return select().copy(confirmed = source.confirmed, lastVerifiedAt = source.lastVerifiedAt)
+        return select().copy(lastVerifiedAt = source.lastVerifiedAt)
     }
 }

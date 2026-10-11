@@ -16,7 +16,7 @@ const val SHIZUKU_GUIDE = "https://shizuku.rikka.app/zh-hans/guide/setup/"
 class AndroidShizukuRuntime(private val context: Context) : ShizukuRuntime {
     private val handler = Handler(Looper.getMainLooper())
     private val args = Shizuku.UserServiceArgs(ComponentName(context, ConfigUserService::class.java))
-        .daemon(false).processNameSuffix("config_access").tag("terraria-fixed-config").version(2)
+        .daemon(false).processNameSuffix("config_access").tag("terraria-fixed-config").version(3)
     private var binding: ServiceConnection? = null
     private var received: Shizuku.OnBinderReceivedListener? = null
     private var dead: Shizuku.OnBinderDeadListener? = null
@@ -70,17 +70,54 @@ fun createShizukuConnection(context: Context): ShizukuConnection {
     }
 }
 
-class BinderConfigFiles(private val remote: IConfigFileService) : RemoteConfigFiles {
+class BinderConfigFiles(private val remote: IConfigFileService) : RemoteConfigFiles, RemoteSaveFiles {
+    override fun saves(): RemoteSaveFiles = this
+    private fun saveFailure(error: Exception): Nothing {
+        val message = when (error.message) {
+            "SAVE_ERROR:MISSING_ROOT" -> "没有找到该版本的游戏存档目录。请先安装并打开游戏；国服还需要登录账号，再完全退出游戏后刷新。"
+            "SAVE_ERROR:INVALID" -> "存档名称、账号或目录异常，已取消操作。请选择 .plr、.wld 或工具箱导出的 ZIP。"
+            "SAVE_ERROR:LIMIT" -> "文件过大或数量过多，请分批处理。单个存档支持 64 MB。"
+            "SAVE_ERROR:VERIFY" -> "存档校验未通过，本次导入已取消。请检查原文件后重试。"
+            "SAVE_ERROR:ACCESS" -> "无法访问游戏存档，请确认 Shizuku 已启动并授权后重试。"
+            else -> "存档操作未完成，结果尚未确认。请保持游戏关闭，重新连接并刷新列表后检查。"
+        }
+        throw ToolException(message)
+    }
+    override fun accounts(): List<String> = try { remote.saveAccounts().toList() } catch (e: Exception) { saveFailure(e) }
+    override fun list(target: SaveTarget): List<GameSave> = try {
+        remote.listSaves(target.edition.code, target.account).getParcelableArrayList("entries", Bundle::class.java).orEmpty().map {
+            GameSave(it.getString("name").orEmpty(), it.getLong("size"), it.getLong("modified"))
+        }
+    } catch (e: Exception) { saveFailure(e) }
+    override fun read(target: SaveTarget, name: String, output: java.io.OutputStream) {
+        try {
+            ParcelFileDescriptor.AutoCloseInputStream(remote.openSaveRead(target.edition.code, target.account, name)).use { input ->
+                val buffer = ByteArray(8192); var total = 0L
+                while (true) {
+                    val n = input.read(buffer); if (n < 0) break
+                    total += n; if (total > MAX_SAVE_BYTES) throw ToolException("存档超过 64 MB，已取消读取。")
+                    output.write(buffer, 0, n)
+                }
+                if (total == 0L) throw ToolException("存档文件为空，已取消读取。")
+            }
+        } catch (e: ToolException) { throw e } catch (e: Exception) { saveFailure(e) }
+    }
+    override fun import(target: SaveTarget, save: StagedSave): String = try {
+        ParcelFileDescriptor.open(save.file, ParcelFileDescriptor.MODE_READ_ONLY).use { source ->
+            remote.importSave(target.edition.code, target.account, save.name, source, save.file.length(), saveFileHash(save.file)).getString("name")
+                ?: throw ToolException("没有收到导入结果，请刷新列表检查。")
+        }
+    } catch (e: ToolException) { throw e } catch (e: Exception) { saveFailure(e) }
     override val alive get() = remote.asBinder().isBinderAlive
     private fun failure(error: Exception, openingWrite: Boolean = false): Nothing {
         val code = if (error is IllegalArgumentException) Regex("^FILE_ERROR:([1-6])$").matchEntire(error.message.orEmpty())?.groupValues?.get(1)?.toInt() else null
         if (code != null) {
             val message = when (code) {
-                FixedConfigFile.MISSING -> "目标配置不存在，请先运行游戏生成配置并完全退出。"
-                FixedConfigFile.NOT_REGULAR -> "目标不是普通文件或为符号链接，禁止操作。"
-                FixedConfigFile.TOO_LARGE -> "配置超过 8 MiB，已中止操作。"
-                FixedConfigFile.HASH_CHANGED -> "源文件发生变化，已取消写入。请完全退出游戏后刷新。"
-                FixedConfigFile.ACCESS -> "Shizuku 无法访问目标配置，请检查系统限制和文件权限。"
+                FixedConfigFile.MISSING -> "还没有找到游戏设置。请先打开一次泰拉瑞亚，再完全退出后重新连接。"
+                FixedConfigFile.NOT_REGULAR -> "游戏设置文件的位置异常，已取消操作。"
+                FixedConfigFile.TOO_LARGE -> "游戏设置文件过大，已取消操作。"
+                FixedConfigFile.HASH_CHANGED -> "游戏设置发生变化，已取消保存。请完全退出游戏后刷新。"
+                FixedConfigFile.ACCESS -> "Shizuku 无法打开游戏设置，请确认游戏已安装，并重新启动 Shizuku 后重试。"
                 else -> "Shizuku 文件操作未完成；如有未完成写入，暂勿启动游戏。"
             }
             if (openingWrite && code != FixedConfigFile.IO) throw WriteNotStartedException(message)
@@ -99,7 +136,7 @@ class BinderConfigFiles(private val remote: IConfigFileService) : RemoteConfigFi
             while (true) {
                 val count = input.read(buffer)
                 if (count < 0) break
-                if (output.size() + count > MAX_CONFIG_BYTES) throw ToolException("配置超过 8 MiB，无法处理。")
+                if (output.size() + count > MAX_CONFIG_BYTES) throw ToolException("游戏设置文件过大，暂时无法处理。")
                 output.write(buffer, 0, count)
             }
             output.toByteArray()

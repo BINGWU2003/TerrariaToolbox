@@ -17,9 +17,9 @@ data class ConfigDocument(val root: JsonObject, val language: Language, val lang
     val version: String? get() = (root["LastLaunchedVersion"] as? JsonPrimitive)
         ?.takeIf { !it.isString && INTEGER.matches(it.content) }?.content
     val languageLabel: String get() = when (language) {
-        Language.ENGLISH -> "英文（1）"
-        Language.CHINESE -> "配置已设为中文（7）"
-        Language.UNSUPPORTED -> "暂不支持的语言编号：${languageNumber.take(48)}"
+        Language.ENGLISH -> "英文"
+        Language.CHINESE -> "中文"
+        Language.UNSUPPORTED -> "暂不支持当前游戏语言"
     }
 }
 
@@ -33,21 +33,21 @@ class ConfigProcessor {
     private val json = Json { prettyPrint = true }
 
     fun inspect(bytes: ByteArray): ConfigDocument {
-        if (bytes.isEmpty()) throw ToolException("配置文件为空，请检查选择的位置。")
-        if (bytes.size > MAX_CONFIG_BYTES) throw ToolException("文件超过 8 MiB，无法作为配置处理。")
+        if (bytes.isEmpty()) throw ToolException("游戏设置文件是空的。请先打开一次游戏，再完全退出后重试。")
+        if (bytes.size > MAX_CONFIG_BYTES) throw ToolException("游戏设置文件过大，暂时无法处理。")
         val text = try {
             Charsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
                 .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes))
                 .toString().removePrefix("\uFEFF")
         } catch (_: Exception) {
-            throw ToolException("配置不是有效的 UTF-8 JSON 文件。")
+            throw ToolException("游戏设置文件无法识别，已取消操作。")
         }
         StrictJsonCheck(text).check()
         val root = try { json.parseToJsonElement(text) as? JsonObject } catch (_: Exception) { null }
-            ?: throw ToolException("配置不受支持：JSON 根节点必须是对象。")
+            ?: throw ToolException("游戏设置文件格式不受支持，已取消操作。")
         val field = root["Language"] as? JsonPrimitive
         if (field == null || field.isString || !INTEGER.matches(field.content)) {
-            throw ToolException("配置不受支持：根对象的 Language 必须是整数，不能是字符串或小数。")
+            throw ToolException("无法识别游戏语言，请先打开一次游戏，再完全退出后重试。")
         }
         val language = when (field.content) {
             "1" -> Language.ENGLISH
@@ -61,21 +61,29 @@ class ConfigProcessor {
         if (it.language == Language.UNSUPPORTED) throw ToolException(it.languageLabel + "，未修改文件。")
     }
 
-    fun chineseCandidate(original: ByteArray): ByteArray {
+    fun chineseCandidate(original: ByteArray): ByteArray = languageCandidate(original, Language.CHINESE)
+
+    fun languageCandidate(original: ByteArray, target: Language): ByteArray {
+        require(target != Language.UNSUPPORTED)
         val document = requireSupported(original)
-        if (document.language == Language.CHINESE) return original.copyOf()
-        val candidate = JsonObject(document.root.toMutableMap().apply { put("Language", JsonPrimitive(7)) })
+        if (document.language == target) return original.copyOf()
+        val candidate = JsonObject(document.root.toMutableMap().apply {
+            put("Language", JsonPrimitive(if (target == Language.CHINESE) 7 else 1))
+        })
             .toString().toByteArray(Charsets.UTF_8)
-        verifyChinese(original, candidate)
+        verifyLanguage(original, candidate, target)
         return candidate
     }
 
-    fun verifyChinese(original: ByteArray, candidate: ByteArray) {
+    fun verifyChinese(original: ByteArray, candidate: ByteArray) = verifyLanguage(original, candidate, Language.CHINESE)
+
+    fun verifyLanguage(original: ByteArray, candidate: ByteArray, target: Language) {
+        require(target != Language.UNSUPPORTED)
         val before = requireSupported(original)
         val after = requireSupported(candidate)
-        if (after.language != Language.CHINESE || before.root.filterKeys { it != "Language" } !=
+        if (after.language != target || before.root.filterKeys { it != "Language" } !=
             after.root.filterKeys { it != "Language" }) {
-            throw ToolException("配置校验失败：语言以外的内容发生变化。")
+            throw ToolException("检查未通过：其他游戏设置发生了变化，已取消操作。")
         }
     }
 }
@@ -91,7 +99,7 @@ private class StrictJsonCheck(private val text: String) {
     }
 
     private fun value(depth: Int) {
-        if (depth > 128) throw ToolException("JSON 嵌套过深，配置不受支持。")
+        if (depth > 128) throw ToolException("游戏设置文件内容过于复杂，暂时无法处理。")
         whitespace()
         when (peek()) {
             '{' -> obj(depth + 1)
@@ -116,7 +124,7 @@ private class StrictJsonCheck(private val text: String) {
             val token = string()
             val key = try { (Json.parseToJsonElement(token) as JsonPrimitive).content }
                 catch (_: Exception) { invalid() }
-            if (!keys.add(key)) throw ToolException("配置不受支持：JSON 对象存在重复键。")
+            if (!keys.add(key)) throw ToolException("游戏设置文件中有重复的设置项，已取消操作。")
             whitespace()
             expect(':')
             value(depth)
@@ -184,5 +192,5 @@ private class StrictJsonCheck(private val text: String) {
     private fun peek(): Char = text.getOrNull(position) ?: '\u0000'
     private fun accept(char: Char): Boolean = if (peek() == char) { position++; true } else false
     private fun expect(char: Char) { if (!accept(char)) invalid() }
-    private fun invalid(): Nothing = throw ToolException("JSON 格式错误，配置不受支持，未修改文件。")
+    private fun invalid(): Nothing = throw ToolException("游戏设置文件格式有误，已取消操作。")
 }

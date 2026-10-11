@@ -54,6 +54,10 @@ class FixedConfigFileTest {
     private fun transport(failRead: () -> Boolean = { false }, output: ((String) -> ParcelFileDescriptor)? = null): BinderConfigFiles {
         val binder = object : IConfigFileService.Stub() {
             override fun destroy() = Unit
+            override fun saveAccounts() = emptyArray<String>()
+            override fun listSaves(edition: Int, account: String) = android.os.Bundle()
+            override fun openSaveRead(edition: Int, account: String, name: String): ParcelFileDescriptor = throw UnsupportedOperationException()
+            override fun importSave(edition: Int, account: String, name: String, source: ParcelFileDescriptor, size: Long, hash: String) = android.os.Bundle()
             override fun probe() = engine.probe()
             override fun openRead(): ParcelFileDescriptor {
                 if (failRead()) throw ConfigFileException(FixedConfigFile.ACCESS)
