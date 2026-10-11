@@ -27,7 +27,7 @@ class RoutingDocumentAccessTest {
     }
     @Test fun targetDocumentAliasIsRejectedForExportBeforeOpeningDestination() {
         val backups = object : BackupRepository {
-            override fun save(source: SourceInfo, bytes: ByteArray, reason: String, config: ConfigDocument?): BackupRecord = error("unused")
+            override fun save(source: SourceInfo, bytes: ByteArray, reason: String, config: ConfigDocument?, workspaceId: String?): BackupRecord = error("unused")
             override fun read(record: BackupRecord): ByteArray = error("unused")
             override fun list() = emptyList<BackupRecord>()
         }

@@ -34,6 +34,7 @@ data class BackupRecord(
     val reason: String,
     val tool: String = "chinese-language",
     val fileType: String = "terraria-config-json",
+    val workspaceId: String? = null,
 )
 
 data class PendingOperation(
@@ -52,7 +53,7 @@ interface DocumentAccess {
 }
 
 interface BackupRepository {
-    fun save(source: SourceInfo, bytes: ByteArray, reason: String, config: ConfigDocument?): BackupRecord
+    fun save(source: SourceInfo, bytes: ByteArray, reason: String, config: ConfigDocument?, workspaceId: String? = null): BackupRecord
     fun read(record: BackupRecord): ByteArray
     fun list(): List<BackupRecord>
 }
@@ -93,7 +94,7 @@ class WriteCoordinator(
 
     fun restore(source: SourceInfo, record: BackupRecord): WriteResult {
         requireTarget(source)
-        if (record.source.identity != source.identity || record.source.accessMethod != source.accessMethod || record.tool != "chinese-language" ||
+        if (record.workspaceId != null || record.source.identity != source.identity || record.source.accessMethod != source.accessMethod || record.tool != "chinese-language" ||
             record.fileType != "terraria-config-json") {
             throw ToolException("备份来源或文件类型与目标不同，只能导出备份。")
         }
@@ -133,7 +134,9 @@ class WriteCoordinator(
             if (contentHash(documents.read(destination)) != contentHash(bytes)) {
                 throw ToolException("导出回读校验失败，保存结果未确认，请换位置重试。")
             }
-        } catch (error: ToolException) { throw error }
+        } catch (error: ToolException) {
+            throw ToolException("导出失败或无法回读，保存结果未确认，请换位置重试。\n${error.userMessage}")
+        }
         catch (_: Exception) { throw ToolException("导出失败或无法回读，保存结果未确认，请换位置重试。") }
     }
 

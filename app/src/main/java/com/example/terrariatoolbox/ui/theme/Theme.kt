@@ -1,6 +1,5 @@
 package com.example.terrariatoolbox.ui.theme
 
-import android.app.Activity
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
@@ -10,27 +9,36 @@ import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.Color
 
 private val DarkColorScheme = darkColorScheme(
-    primary = Purple80,
-    secondary = PurpleGrey80,
-    tertiary = Pink80
+    primary = Green80,
+    secondary = Sage80,
+    tertiary = Teal80,
+    onPrimary = Color(0xFF00391F),
+    primaryContainer = Color(0xFF0C5130), onPrimaryContainer = Color(0xFFBBF1C8),
+    secondaryContainer = Color(0xFF3B4B3C), onSecondaryContainer = Color(0xFFD4E8D3),
+    background = Color(0xFF101511), onBackground = Color(0xFFDFE5DE),
+    surface = Color(0xFF101511), onSurface = Color(0xFFDFE5DE),
+    surfaceVariant = Color(0xFF414942), onSurfaceVariant = Color(0xFFC1C9BF),
+    surfaceContainerLowest = Color(0xFF0B100C), surfaceContainerLow = Color(0xFF181D19),
+    surfaceContainer = Color(0xFF1C211D), surfaceContainerHigh = Color(0xFF262B27),
+    surfaceContainerHighest = Color(0xFF313632)
 )
 
 private val LightColorScheme = lightColorScheme(
-    primary = Purple40,
-    secondary = PurpleGrey40,
-    tertiary = Pink40
-
-    /* Other default colors to override
-    background = Color(0xFFFFFBFE),
-    surface = Color(0xFFFFFBFE),
+    primary = Green40,
+    secondary = Sage40,
+    tertiary = Teal40,
     onPrimary = Color.White,
-    onSecondary = Color.White,
-    onTertiary = Color.White,
-    onBackground = Color(0xFF1C1B1F),
-    onSurface = Color(0xFF1C1B1F),
-    */
+    primaryContainer = Color(0xFFBBF1C8), onPrimaryContainer = Color(0xFF00210F),
+    secondaryContainer = Color(0xFFD4E8D3), onSecondaryContainer = Color(0xFF101F12),
+    background = Color(0xFFF6FBF3), onBackground = Color(0xFF181D18),
+    surface = Color(0xFFF6FBF3), onSurface = Color(0xFF181D18),
+    surfaceVariant = Color(0xFFDDE5DA), onSurfaceVariant = Color(0xFF414942),
+    surfaceContainerLowest = Color.White, surfaceContainerLow = Color(0xFFF0F5ED),
+    surfaceContainer = Color(0xFFEAF0E7), surfaceContainerHigh = Color(0xFFE4EAE1),
+    surfaceContainerHighest = Color(0xFFDFE5DB)
 )
 
 @Composable

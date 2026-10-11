@@ -30,12 +30,16 @@ data class ValidationState(
     val notes: EnvironmentNotes = EnvironmentNotes(),
     val events: List<String> = emptyList(),
     val busy: Boolean = false,
-    val message: String = "请启动 Shizuku 并连接；也可使用其他授权方式。",
+    val message: String = "请选择直接切换或导入配置副本。",
     val shizuku: ShizukuState = ShizukuState(),
+    val workspace: CopyWorkspace? = null,
+    val copyConfig: ConfigDocument? = null,
+    val copyError: String? = null,
+    val importAwaiting: SourceInfo? = null,
 )
 
 data class ExportSpec(val name: String, val mime: String)
-private data class ExportRequest(val spec: ExportSpec, val bytes: ByteArray, val success: String, val protectedUris: List<String>)
+private data class ExportRequest(val spec: ExportSpec, val bytes: ByteArray, val success: String, val protectedUris: List<String>, val copy: Boolean = false)
 
 class ValidationViewModel(application: Application) : AndroidViewModel(application) {
     private val root = File(application.noBackupFilesDir, "validation")
@@ -49,11 +53,14 @@ class ValidationViewModel(application: Application) : AndroidViewModel(applicati
     private val backups = FileBackupRepository(File(root, "backups"), writer)
     private val journal = FileOperationJournal(File(root, "pending.json"), writer)
     private val coordinator = WriteCoordinator(documents, backups, journal, processor)
+    private val workspaceStore = CopyWorkspaceStore(File(application.noBackupFilesDir, "copy-workspace"), writer)
+    private val copies = CopyCoordinator(workspaceStore, documents, backups, coordinator, processor)
     private val mutex = Mutex()
     private val mutableState = MutableStateFlow(ValidationState())
     val state: StateFlow<ValidationState> = mutableState
     private var exportRequest: ExportRequest? = null
     private var pendingShizukuSelection = false
+    private var preparedImport: PreparedCopyImport? = null
 
     val environment: String = "${Build.MANUFACTURER} ${Build.MODEL}\nAndroid ${Build.VERSION.RELEASE} · API ${Build.VERSION.SDK_INT}" +
         "\n安全补丁：${Build.VERSION.SECURITY_PATCH}\n应用版本：${application.packageManager.getPackageInfo(application.packageName, 0).versionName}" +
@@ -80,7 +87,10 @@ class ValidationViewModel(application: Application) : AndroidViewModel(applicati
         }
         task("重新检查授权", after = { if (state.value.source?.accessMethod == AccessMethod.SHIZUKU) connection.connect(false) }) {
             val selected = session.source()
-            if (selected == null) "请启动 Shizuku 并连接；也可使用其他授权方式。"
+            if (selected == null) {
+                if (workspaceStore.load() != null) "已加载上次编辑副本。导入导出无需启动 Shizuku，仍需手动替换游戏配置。"
+                else "请连接 Shizuku 读取游戏配置，或导入可访问的配置副本。"
+            }
             else "已重新检查保存的授权和目标内容。历史验证不代表本次游戏已生效。"
         }
     }
@@ -173,6 +183,61 @@ class ValidationViewModel(application: Application) : AndroidViewModel(applicati
         "原始字节备份已保存并回读校验。卸载应用或清除数据会丢失内部备份，请及时导出。"
     }
 
+    fun importSelected(uri: Uri?, flags: Int) {
+        if (uri == null) { task("取消导入") { "已取消导入，当前副本未改变。" }; return }
+        task("读取导入副本") { stageImport(saf.importSource(uri, flags)) }
+    }
+
+    fun importLegacySource() = task("导入为副本") {
+        val source = session.source() ?: throw ToolException("请先选择可读取的配置。")
+        stageImport(source)
+    }
+
+    private fun stageImport(source: SourceInfo): String {
+        preparedImport = null
+        val prepared = copies.prepareImport(source)
+        return if (prepared.previousId == null) {
+            copies.import(prepared)
+            "配置副本已导入，源文件未修改。生成和恢复仅操作应用内副本。"
+        } else {
+            preparedImport = prepared
+            "配置有效，请确认是否替换当前编辑副本。"
+        }
+    }
+
+    fun confirmImport() = task("替换编辑副本") {
+        val prepared = preparedImport ?: throw ToolException("导入任务已失效，请重新选择。")
+        copies.import(prepared)
+        preparedImport = null
+        "新配置副本已导入，原编辑副本已备份；导入源文件未修改。"
+    }
+
+    fun cancelImport() = task("取消替换副本") {
+        preparedImport = null
+        "已取消导入，当前副本未改变。"
+    }
+
+    fun saveCopyBackup() = task("备份编辑副本") {
+        copies.saveBackup()
+        "副本原始字节备份已保存并回读校验。"
+    }
+
+    fun restoreCopy(record: BackupRecord) = task("恢复编辑副本") {
+        copies.restore(record)
+        "已恢复编辑副本并逐字节校验，尚未替换游戏配置。"
+    }
+
+    fun prepareCopyExport(ready: (ExportSpec) -> Unit) = task("生成并准备导出副本", after = {
+        exportRequest?.spec?.let(ready)
+    }) {
+        val workspace = copies.generateChinese()
+        val bytes = workspaceStore.read(workspace)
+        val spec = ExportSpec("config.json", "application/json")
+        exportRequest = ExportRequest(spec, bytes, "中文配置已导出，尚未替换游戏配置。请完全退出游戏，再用 MT 替换原文件。",
+            protectedUris() + workspace.source.uri, copy = true)
+        "中文编辑副本已准备好，尚未导出。请选择新的保存位置。"
+    }
+
     fun prepareBackupExport(record: BackupRecord, ready: (ExportSpec) -> Unit) = task("准备备份导出", after = {
         exportRequest?.spec?.let(ready)
     }) {
@@ -188,7 +253,7 @@ class ValidationViewModel(application: Application) : AndroidViewModel(applicati
         session.saveNotes(notes)
         val source = session.source()
         val report = buildString {
-            appendLine("泰拉瑞亚工具箱 · Shizuku 与 SAF 验证记录")
+            appendLine("泰拉瑞亚工具箱 · 本机诊断记录")
             appendLine("记录时间：${formatTime(System.currentTimeMillis())}")
             appendLine(environment)
             appendLine("游戏发行版本：${notes.gameVersion.ifBlank { "待填写" }}")
@@ -205,10 +270,12 @@ class ValidationViewModel(application: Application) : AndroidViewModel(applicati
             appendLine(if (source?.accessMethod == AccessMethod.SHIZUKU) "Shizuku 重启要求：设备重启后需重新启动服务并检查授权。"
                 else "读取授权持久保存：${source?.persisted == true}")
             appendLine("历史写回回读通过时间：${source?.lastVerifiedAt?.let(::formatTime) ?: "尚未验证"}")
-            appendLine("游戏中文显示：待真机验证")
+            appendLine("游戏中文显示：需在当前设备人工确认，工具箱不自动检测")
             appendLine("应用/设备重启后授权复用：待真机验证")
             appendLine("MT 授权页面及实际范围：待人工核对")
-            appendLine("支持结论：尚未完成 Android 14 真机完整验收；模拟器结果不代表真机支持。")
+            appendLine("支持范围：历史用户实测已记录；其他设备及版本需独立验收。")
+            val copy = runCatching { workspaceStore.load() }.getOrNull()
+            appendLine("编辑副本：${if (copy == null) "尚未导入" else "仅在应用内部保存，未自动替换游戏配置"}")
             appendLine("\n操作记录（不包含配置内容或配置中的用户标识）：")
             session.events().forEach { appendLine(it) }
         }
@@ -220,7 +287,11 @@ class ValidationViewModel(application: Application) : AndroidViewModel(applicati
     fun exported(uri: Uri?) {
         val request = exportRequest
         exportRequest = null
-        if (uri == null) { cancelled("导出"); return }
+        if (uri == null) {
+            task("取消导出") { if (request?.copy == true) "已取消导出，已生成的编辑副本和原始备份已保留，尚未替换游戏配置。"
+                else "已取消导出，未修改文件。" }
+            return
+        }
         task("导出并回读校验") {
             if (request == null) throw ToolException("导出任务已失效，未写入文件，请重新导出。")
             coordinator.export(uri.toString(), request.bytes, (request.protectedUris + protectedUris()).distinct())
@@ -241,7 +312,8 @@ class ValidationViewModel(application: Application) : AndroidViewModel(applicati
 
     private fun requireSource(): SourceInfo = session.source()?.let { refreshSource(it) }
         ?: throw ToolException("请先授权或选择配置文件。")
-    private fun protectedUris(): List<String> = backups.list().map { it.source.uri } + listOfNotNull(session.source()?.uri) + SHIZUKU_URI
+    private fun protectedUris(): List<String> = backups.list().map { it.source.uri } +
+        listOfNotNull(session.source()?.uri, runCatching { workspaceStore.load()?.source?.uri }.getOrNull()) + SHIZUKU_URI
 
     private fun snapshot(): ValidationState {
         val source = runCatching { session.source() }.getOrNull()
@@ -262,9 +334,15 @@ class ValidationViewModel(application: Application) : AndroidViewModel(applicati
         }
         var pendingError: String? = null
         val pending = try { journal.load() } catch (error: Exception) { pendingError = friendly(error); null }
+        var copyError: String? = null
+        val workspace = try { workspaceStore.load() } catch (error: Exception) { copyError = friendly(error); null }
+        val copyConfig = workspace?.let {
+            try { processor.inspect(workspaceStore.read(it)) } catch (error: Exception) { copyError = friendly(error); null }
+        }
         return ValidationState(refreshed, config, configError, pending, pendingError, backups.list(),
             runCatching { session.notes() }.getOrDefault(EnvironmentNotes()), runCatching { session.events() }.getOrDefault(emptyList()),
-            shizuku = connection.state.value)
+            shizuku = connection.state.value, workspace = workspace, copyConfig = copyConfig, copyError = copyError,
+            importAwaiting = preparedImport?.source)
     }
 
     private fun task(label: String, after: (() -> Unit)? = null, work: () -> String) {
@@ -298,7 +376,7 @@ class ValidationViewModel(application: Application) : AndroidViewModel(applicati
     private fun friendly(error: Exception): String = when (error) {
         is ToolException -> error.userMessage
         is SecurityException -> "授权已失效，请重新授权。"
-        else -> "操作未完成，请检查文件权限和剩余空间。未确认成功；如有未完成写入，请先恢复或导出备份。"
+        else -> "操作未完成，请检查文件权限和剩余空间。结果未确认，请查看备份和诊断记录。"
     }
 }
 

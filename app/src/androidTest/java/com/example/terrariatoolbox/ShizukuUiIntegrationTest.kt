@@ -13,6 +13,8 @@ class ShizukuUiIntegrationTest {
     @DedicatedFixture
     @Test fun genuineShizukuPageConfirmsSourceSwitchesAndRestores() {
         assumeTrue(InstrumentationRegistry.getArguments().getString("shizukuFixture") == "true")
+        compose.onNodeWithTag("open-chinese").performClick()
+        scroll(hasTestTag("connect-shizuku"))
         compose.waitUntil(15_000) { compose.onAllNodes(hasTestTag("connect-shizuku") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("connect-shizuku").performClick()
         waitResult("Shizuku 读取成功")
@@ -26,10 +28,12 @@ class ShizukuUiIntegrationTest {
         waitResult("配置已保存并回读校验")
         scroll(hasTestTag("switch-chinese"))
         compose.onNodeWithTag("switch-chinese").assertIsNotEnabled()
+        scroll(hasTestTag("open-backups")); compose.onNodeWithTag("open-backups").performClick()
         scroll(hasText("完整恢复"))
         compose.onAllNodesWithText("完整恢复").filter(isEnabled()).onFirst().performClick()
         compose.onNodeWithText("已退出，完整恢复").performClick()
         waitResult("已恢复游戏配置并逐字节校验")
+        compose.onNodeWithTag("navigate-back").performClick()
         scroll(hasTestTag("switch-chinese")); compose.onNodeWithTag("switch-chinese").assertIsEnabled()
     }
     private fun scroll(matcher: SemanticsMatcher) { compose.onNodeWithTag("validation-list").performScrollToNode(matcher) }

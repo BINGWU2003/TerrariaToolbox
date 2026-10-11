@@ -18,6 +18,8 @@ import java.nio.charset.StandardCharsets;
 public class TestDocumentsProvider extends DocumentsProvider {
     private boolean readOnly;
     private boolean denyRead;
+    private boolean denyExportRead;
+    private String importName = "config.json";
     private final String[] columns = { Document.COLUMN_DOCUMENT_ID, Document.COLUMN_DISPLAY_NAME,
         Document.COLUMN_MIME_TYPE, Document.COLUMN_FLAGS, Document.COLUMN_SIZE };
     @Override public boolean onCreate() { return true; }
@@ -53,7 +55,8 @@ public class TestDocumentsProvider extends DocumentsProvider {
     }
     @Override public ParcelFileDescriptor openDocument(String id, String mode, CancellationSignal signal) throws FileNotFoundException {
         if (denyRead && !mode.contains("w")) throw new SecurityException("test revoked");
-        if (readOnly && mode.contains("w")) throw new FileNotFoundException("test read only");
+        if (denyExportRead && "export".equals(id) && !mode.contains("w")) throw new SecurityException("test export readback failed");
+        if (readOnly && "config".equals(id) && mode.contains("w")) throw new FileNotFoundException("test read only");
         return ParcelFileDescriptor.open(file(id), ParcelFileDescriptor.parseMode(mode));
     }
     @Override public String createDocument(String parent, String mime, String name) throws FileNotFoundException {
@@ -64,6 +67,8 @@ public class TestDocumentsProvider extends DocumentsProvider {
         if ("test.reset".equals(method)) {
             readOnly = extras != null && extras.getBoolean("readOnly");
             denyRead = extras != null && extras.getBoolean("denyRead");
+            denyExportRead = extras != null && extras.getBoolean("denyExportRead");
+            importName = extras != null ? extras.getString("name", "config.json") : "config.json";
             byte[] bytes = extras != null ? extras.getByteArray("bytes") : null;
             if (bytes == null) bytes = "{\"Language\":1}".getBytes(StandardCharsets.UTF_8);
             try {
@@ -89,9 +94,9 @@ public class TestDocumentsProvider extends DocumentsProvider {
         for (String name : names) {
             Object value = null;
             if (Document.COLUMN_DOCUMENT_ID.equals(name)) value = id;
-            else if (Document.COLUMN_DISPLAY_NAME.equals(name)) value = "config".equals(id) ? "config.json" : "root".equals(id) ? "Test folder" : "export.json";
+            else if (Document.COLUMN_DISPLAY_NAME.equals(name)) value = "config".equals(id) ? importName : "root".equals(id) ? "Test folder" : "export.json";
             else if (Document.COLUMN_MIME_TYPE.equals(name)) value = "root".equals(id) ? Document.MIME_TYPE_DIR : "application/json";
-            else if (Document.COLUMN_FLAGS.equals(name)) value = "root".equals(id) ? Document.FLAG_DIR_SUPPORTS_CREATE : readOnly ? 0 : Document.FLAG_SUPPORTS_WRITE;
+            else if (Document.COLUMN_FLAGS.equals(name)) value = "root".equals(id) ? Document.FLAG_DIR_SUPPORTS_CREATE : readOnly && "config".equals(id) ? 0 : Document.FLAG_SUPPORTS_WRITE;
             else if (Document.COLUMN_SIZE.equals(name)) value = "root".equals(id) ? 0 : file(id).length();
             row.add(value);
         }

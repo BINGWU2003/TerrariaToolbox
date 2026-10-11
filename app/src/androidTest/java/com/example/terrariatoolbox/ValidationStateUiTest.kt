@@ -50,6 +50,34 @@ class ValidationStateUiTest {
         assertEquals(0, writes)
         compose.onNodeWithText("已退出，开始验证").performClick(); assertEquals(1, writes)
     }
+
+    @Test fun recoveryWarningSurvivesHomeModeAndSecondaryPageNavigation() {
+        val state = ValidationState(source, ConfigProcessor().inspect("{\"Language\":1}".toByteArray()),
+            pending = PendingOperation(source, "backup", "before", "after", "switch", 1))
+        compose.setContent { TerrariaToolboxTheme { ValidationContent(state, "测试设备", ValidationActions(), initialPage = "home") } }
+        compose.onNodeWithTag("recovery-warning").assertExists()
+        compose.onNodeWithTag("home-list").performScrollToNode(hasTestTag("open-chinese"))
+        compose.onNodeWithTag("open-chinese").performClick()
+        compose.onNodeWithTag("validation-list").performScrollToNode(hasTestTag("mode-copy"))
+        compose.onNodeWithTag("mode-copy").performClick()
+        compose.onNodeWithTag("recovery-warning").assertExists()
+        compose.onNodeWithTag("validation-list").performScrollToNode(hasTestTag("mode-direct"))
+        compose.onNodeWithTag("mode-direct").performClick()
+        compose.onNodeWithTag("validation-list").performScrollToNode(hasTestTag("switch-chinese"))
+        compose.onNodeWithTag("switch-chinese").assertIsNotEnabled()
+        compose.onNodeWithTag("navigate-home").performClick()
+        compose.onNodeWithTag("recovery-warning").assertExists()
+    }
+
+    @Test fun returningHomeDoesNotCancelBusyOperation() {
+        var writes = 0
+        show(ValidationState(source, ConfigProcessor().inspect("{\"Language\":1}".toByteArray()), busy = true),
+            ValidationActions(switch = { writes++ }))
+        compose.onNodeWithTag("switch-chinese").assertIsNotEnabled()
+        compose.onNodeWithTag("navigate-home").performClick()
+        compose.onNodeWithTag("home-list").performScrollToNode(hasTestTag("operation-result"))
+        compose.onNodeWithTag("operation-result").assertExists(); assertEquals(0, writes)
+    }
     private fun show(state: ValidationState, actions: ValidationActions = ValidationActions()) {
         compose.setContent { TerrariaToolboxTheme { ValidationContent(state, "测试设备", actions) } }
         compose.onNodeWithTag("validation-list").performScrollToNode(hasTestTag("switch-chinese"))

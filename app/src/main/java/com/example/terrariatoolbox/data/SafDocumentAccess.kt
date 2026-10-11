@@ -85,6 +85,18 @@ class SafDocumentAccess(private val context: Context) : DocumentAccess {
             persisted = permission?.isReadPermission == true)
     }
 
+    fun importSource(uri: Uri, resultFlags: Int): SourceInfo {
+        if (uri.scheme != "content") throw ToolException("请选择系统文件入口返回的配置副本。")
+        if (resultFlags and Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION != 0 &&
+            resultFlags and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0) {
+            runCatching { resolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+        }
+        val name = describe(uri).name
+        return SourceInfo(uri.toString(), uri.toString(), identity(uri.toString()), uri.authority.orEmpty(),
+            runCatching { DocumentsContract.getDocumentId(uri) }.getOrDefault(""), name, "导入副本",
+            false, resolver.persistedUriPermissions.any { it.uri == uri && it.isReadPermission }, false)
+    }
+
     data class Metadata(val name: String, val writable: Boolean)
 
     fun describe(uri: Uri): Metadata {

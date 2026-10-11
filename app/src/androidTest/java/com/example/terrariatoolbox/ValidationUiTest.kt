@@ -26,6 +26,7 @@ class ValidationUiTest {
     @Before fun setup() {
         Intents.init()
         compose.activity.contentResolver.call(TEST_CONTROL_AUTHORITY, "test.reset", null, Bundle().apply { putByteArray("bytes", english) })
+        compose.onNodeWithTag("open-chinese").performClick()
         compose.onNodeWithTag("validation-list").performScrollToNode(hasTestTag("select-file"))
         compose.waitUntil(15_000) { compose.onAllNodes(hasTestTag("select-file") and isEnabled()).fetchSemanticsNodes().isNotEmpty() }
         compose.waitForIdle()
@@ -53,6 +54,8 @@ class ValidationUiTest {
         waitForResult("原始字节备份已保存")
         val result = Intent().setData(exportUri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
         Intents.intending(hasAction(Intent.ACTION_CREATE_DOCUMENT)).respondWith(ActivityResult(Activity.RESULT_OK, result))
+        compose.onNodeWithTag("validation-list").performScrollToNode(hasTestTag("open-backups"))
+        compose.onNodeWithTag("open-backups").performClick()
         compose.onNodeWithTag("validation-list").performScrollToNode(hasText("导出原始备份"))
         compose.onAllNodesWithText("导出原始备份").onFirst().performClick()
         waitForResult("原始备份已导出，尚未替换游戏配置")

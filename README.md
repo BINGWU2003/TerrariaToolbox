@@ -1,6 +1,6 @@
 # 泰拉瑞亚工具箱
 
-Kotlin + Jetpack Compose 原生 Android 应用。当前为 1.1 “Shizuku 优先授权与安全写回验证版”，保留第一阶段 SAF 入口；完整工具箱和副本编辑流程属于后续阶段。
+Kotlin + Jetpack Compose 原生 Android 应用。当前为 **1.2 / versionCode 3**，提供工具箱首页、Shizuku/SAF 直接中文切换，以及无需启动 Shizuku 的配置副本导入、生成、导出与恢复。第一版仅包含“中文切换”工具。
 
 ## 构建
 
@@ -17,7 +17,9 @@ $env:JAVA_HOME = 'D:\Program Files\Android\Android Studio\jbr'
 .\gradlew.bat :app:connectedDebugAndroidTest
 ```
 
-构建 APK：`app/build/outputs/apk/debug/app-debug.apk`。新版交付副本：`artifacts/shizuku-validation/TerrariaToolbox-shizuku-validation-debug.apk`。第一阶段 APK 原样保留。使用原 Debug 签名，可覆盖安装并保留内部备份；工具箱不上传配置。
+构建 APK：`app/build/outputs/apk/debug/app-debug.apk`。新版交付：`artifacts/v1.2/TerrariaToolbox-v1.2-debug.apk`，摘要为同目录 `SHA256SUMS.txt`。使用原 Debug 签名，可直接覆盖安装 1.1 并保留会话、备份及未完成记录；不要先卸载或清除数据。历史 APK 和原配置样本原样保留。
+
+1.2 的 [操作说明](docs/v1.2-usage.md)、[真机验收模板](docs/v1.2-device-validation-template.md) 和 [开发验证记录](docs/v1.2-development-validation.md)。绿色 Material 3 页面跟随系统浅色/深色及字体大小。导入失败不替换旧副本，副本备份只恢复到对应编辑副本，外部恢复会完整还原音量、按键等设置。
 
 ## 验证与支持范围
 
@@ -33,8 +35,8 @@ SAF 入口只识别外部存储系统提供方给出的精确目标文档 ID `pr
 
 ## 代码职责
 
-- `domain`：严格 JSON 检查、语言修改、内容校验及写入/恢复/导出协调。
+- `domain`：严格 JSON 检查、语言修改、内容校验、直接写入协调及 `CopyWorkspace` / `CopyCoordinator`。
 - `data`：SAF、Shizuku UserService 与文件描述符访问、内部安全落盘、原始备份、授权信息及未完成操作记录。
-- `feature/chinese`：验证页面和 ViewModel；所有文件工作在 IO 线程串行执行。
+- `feature/chinese`：首页、两种编辑模式、次级页面和 ViewModel；所有文件工作在 IO 线程串行执行，返回首页不会取消操作。
 
 备份和操作记录位于应用内部 `noBackupFilesDir`，不随系统云备份上传。备份逐字节保存且不会自动删除。外部 SAF 提供方没有通用原子替换保证，写入失败或应用被中断时须先检查或恢复备份。

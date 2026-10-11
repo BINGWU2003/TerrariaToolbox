@@ -86,12 +86,26 @@ class LocalStorageTest {
         val bytes = "{\"Language\":1}".toByteArray()
         val record = repository.save(testSource(), bytes, "legacy", processor.inspect(bytes))
         val meta = File(root, "backups/${record.id}.json")
+        assertFalse(meta.readText().contains("workspaceId"))
         meta.writeText(meta.readText().replace(",\"accessMethod\":\"SAF\"", ""))
         assertArrayEquals(bytes, repository.read(repository.list().single()))
+        assertNull(repository.list().single().workspaceId)
         val pendingFile = File(root, "pending.json")
         val pending = PendingOperation(testSource(), record.id, "before", "after", "switch", 1)
         FileOperationJournal(pendingFile, writer).save(pending)
         pendingFile.writeText(pendingFile.readText().replace(",\"accessMethod\":\"SAF\"", ""))
         assertEquals(pending, FileOperationJournal(pendingFile, writer).load())
+    }
+
+    @Test fun optionalWorkspaceIdSurvivesReopeningWithoutChangingExternalBackupRecord() {
+        val root = temp.newFolder()
+        val repository = FileBackupRepository(root, writer)
+        val bytes = "{\"Language\":1}".toByteArray()
+        val internal = repository.save(testSource(), bytes, "copy", processor.inspect(bytes), "workspace")
+        val external = repository.save(testSource(), bytes, "direct", processor.inspect(bytes))
+        val reopened = FileBackupRepository(root, writer)
+        assertEquals("workspace", reopened.list().single { it.id == internal.id }.workspaceId)
+        assertNull(reopened.list().single { it.id == external.id }.workspaceId)
+        assertArrayEquals(bytes, reopened.read(internal)); assertArrayEquals(bytes, reopened.read(external))
     }
 }

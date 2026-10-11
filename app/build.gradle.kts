@@ -13,8 +13,8 @@ android {
         applicationId = "com.example.terrariatoolbox"
         minSdk = 34
         targetSdk = 37
-        versionCode = 2
-        versionName = "1.1"
+        versionCode = 3
+        versionName = "1.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // Opt-in tests require dedicated fixtures or a real v1.0 upgrade.

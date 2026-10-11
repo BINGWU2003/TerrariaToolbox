@@ -2,11 +2,9 @@ package com.example.terrariatoolbox.feature.chinese
 
 import android.app.Activity
 import android.content.Intent
-import android.provider.DocumentsContract
 import android.net.Uri
-import androidx.compose.ui.platform.LocalContext
-import com.example.terrariatoolbox.data.SHIZUKU_PACKAGE
-import com.example.terrariatoolbox.data.SHIZUKU_GUIDE
+import android.provider.DocumentsContract
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
@@ -16,10 +14,11 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.example.terrariatoolbox.data.EnvironmentNotes
+import com.example.terrariatoolbox.data.*
 import com.example.terrariatoolbox.domain.*
 
 @Composable
@@ -33,14 +32,16 @@ fun ValidationScreen(model: ValidationViewModel) {
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         model.selected(if (it.resultCode == Activity.RESULT_OK) it.data?.data else null, it.data?.flags ?: 0, false)
     }
+    val importPicker = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        model.importSelected(if (it.resultCode == Activity.RESULT_OK) it.data?.data else null, it.data?.flags ?: 0)
+    }
     val exportPicker = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         model.exported(if (it.resultCode == Activity.RESULT_OK) it.data?.data else null)
     }
     fun export(spec: ExportSpec) {
         try {
             exportPicker.launch(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
-                addCategory(Intent.CATEGORY_OPENABLE)
-                type = spec.mime
+                addCategory(Intent.CATEGORY_OPENABLE); type = spec.mime
                 putExtra(Intent.EXTRA_TITLE, spec.name)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
             })
@@ -54,14 +55,22 @@ fun ValidationScreen(model: ValidationViewModel) {
         },
         directory = { try { directoryPicker.launch(selectionIntent(true)) } catch (_: Exception) { model.pickerUnavailable() } },
         file = { try { filePicker.launch(selectionIntent(false)) } catch (_: Exception) { model.pickerUnavailable() } },
+        importCopy = {
+            try { importPicker.launch(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE); type = "*/*"
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+            }) } catch (_: Exception) { model.pickerUnavailable() }
+        },
         confirm = model::confirmSource, refresh = model::refresh, switch = model::switchToChinese,
         saveBackup = model::saveOriginalBackup, restore = model::restore,
         exportBackup = { model.prepareBackupExport(it, ::export) },
         report = { model.prepareReport(it, ::export) }, verifyPending = model::verifyPending,
-    ))
+        importLegacy = model::importLegacySource, confirmImport = model::confirmImport, cancelImport = model::cancelImport,
+        exportCopy = { model.prepareCopyExport(::export) }, saveCopyBackup = model::saveCopyBackup, restoreCopy = model::restoreCopy,
+    ), initialPage = "home")
 }
 
-private fun selectionIntent(directory: Boolean): Intent = Intent(
+private fun selectionIntent(directory: Boolean) = Intent(
     if (directory) Intent.ACTION_OPEN_DOCUMENT_TREE else Intent.ACTION_OPEN_DOCUMENT
 ).apply {
     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
@@ -77,10 +86,16 @@ data class ValidationActions(
     val refresh: () -> Unit = {}, val switch: () -> Unit = {}, val saveBackup: () -> Unit = {},
     val restore: (BackupRecord) -> Unit = {}, val exportBackup: (BackupRecord) -> Unit = {},
     val report: (EnvironmentNotes) -> Unit = {}, val verifyPending: () -> Unit = {},
+    val importCopy: () -> Unit = {}, val importLegacy: () -> Unit = {},
+    val confirmImport: () -> Unit = {}, val cancelImport: () -> Unit = {},
+    val exportCopy: () -> Unit = {}, val saveCopyBackup: () -> Unit = {}, val restoreCopy: (BackupRecord) -> Unit = {},
 )
 
 @Composable
-fun ValidationContent(state: ValidationState, environment: String, actions: ValidationActions) {
+fun ValidationContent(state: ValidationState, environment: String, actions: ValidationActions,
+    initialPage: String = "chinese") {
+    var page by rememberSaveable { mutableStateOf(initialPage) }
+    var mode by rememberSaveable { mutableStateOf("direct") }
     var dialog by remember { mutableStateOf<String?>(null) }
     var restoreBackup by remember { mutableStateOf<BackupRecord?>(null) }
     var gameVersion by rememberSaveable { mutableStateOf("") }
@@ -91,128 +106,226 @@ fun ValidationContent(state: ValidationState, environment: String, actions: Vali
     val enabled = !state.busy
     val accessReady = source?.accessMethod != AccessMethod.SHIZUKU || state.shizuku.phase == ShizukuPhase.CONNECTED
     val direct = source?.knownTarget == true && source.confirmed && source.writable && accessReady
+    fun back() { page = if (page == "chinese") "home" else "chinese" }
+    BackHandler(page != "home") { back() }
 
     Scaffold { padding ->
-        LazyColumn(
-            Modifier.fillMaxSize().padding(padding).testTag("validation-list"),
-            contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            item {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("泰拉瑞亚工具箱", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-                    Text("文件授权与安全写回验证", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
-                    Text("Shizuku 优先验证版 1.1 · 游戏实际生效需要真机确认", style = MaterialTheme.typography.bodySmall)
-                }
+        Column(Modifier.fillMaxSize().padding(padding)) {
+            if (page != "home") Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                TextButton(::back, Modifier.testTag("navigate-back")) { Text(if (page == "chinese") "返回首页" else "返回工具") }
+                TextButton({ page = "home" }, Modifier.testTag("navigate-home")) { Text("首页") }
             }
-            item {
-                Section("目标配置") {
-                    Text(TARGET_PATH, style = MaterialTheme.typography.bodySmall)
-                    Text("通过 Shizuku 的无线调试模式访问固定配置。请先启动服务，再授权工具箱。")
-                    Text(state.shizuku.message, Modifier.testTag("shizuku-status"))
-                    state.shizuku.installedVersion?.let { Text("Shizuku $it · API ${state.shizuku.apiVersion ?: "未知"} · UID ${state.shizuku.uid ?: "未知"}", style = MaterialTheme.typography.bodySmall) }
-                    Button(actions.connectShizuku, enabled = enabled && state.shizuku.phase != ShizukuPhase.CONNECTING,
-                        modifier = Modifier.fillMaxWidth().testTag("connect-shizuku")) { Text("连接 Shizuku 并读取配置") }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(actions.openShizuku, enabled = enabled) { Text("打开 Shizuku") }
-                        OutlinedButton(actions.guide, enabled = enabled) { Text("安装与启动说明") }
+            key(page, mode) {
+                LazyColumn(Modifier.fillMaxSize().testTag(if (page == "home") "home-list" else "validation-list"),
+                    contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    item {
+                        Text(when (page) { "home" -> "泰拉瑞亚工具箱"; "backups" -> "备份历史"; "help" -> "使用说明";
+                            "diagnostics" -> "诊断与记录"; else -> "中文切换" }, style = MaterialTheme.typography.headlineMedium,
+                            fontWeight = FontWeight.Bold)
+                        if (page == "home") Text("1.2 · 轻量离线工具", style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.primary)
                     }
-                    Text("无需 Root 或连接电脑；依赖无线调试。手机重启后需要重新启动 Shizuku。", style = MaterialTheme.typography.bodySmall)
-                }
-            }
-            item {
-                Section("其他授权方式") {
-                    Text("系统入口可能限制 Android/data。目录选择失败时可尝试单文件；MT 的权限不会授予本应用。")
-                    Button(actions.directory, enabled = enabled, modifier = Modifier.fillMaxWidth().testTag("select-directory")) { Text("授权配置目录") }
-                    OutlinedButton(actions.file, enabled = enabled, modifier = Modifier.fillMaxWidth().testTag("select-file")) { Text("选择配置文件") }
-                }
-            }
-            item {
-                Card(colors = CardDefaults.cardColors(containerColor = if (recovery)
-                    MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer)) {
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(if (recovery) "需要检查或恢复" else "操作结果", fontWeight = FontWeight.Bold)
-                        Text(state.message, Modifier.testTag("operation-result"))
-                        if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-                        state.pendingError?.let { Text(it) }
-                        state.pending?.let { pending ->
-                            Text("检测到未完成的${if (pending.kind == "restore") "恢复" else "写入"}：${formatTime(pending.startedAt)}")
-                            Text("暂勿启动游戏。请重新授权原目标，再校验结果或恢复下方原始备份。")
-                            Text("恢复备份标识：${pending.backupId.take(8)}")
-                            OutlinedButton(actions.verifyPending, enabled = enabled && source?.confirmed == true && source.knownTarget) { Text("重新校验上次结果") }
+                    if (recovery) item {
+                        RecoveryPanel(state, enabled && accessReady && source?.confirmed == true && source.knownTarget,
+                            actions.verifyPending, { page = "backups" })
+                    }
+                    if (page == "home") {
+                        item {
+                            Card(onClick = { page = "chinese" }, modifier = Modifier.fillMaxWidth().testTag("open-chinese")) {
+                                Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    Text("中文切换", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                                    Text("备份游戏配置后切换中文，或导入副本生成并导出。")
+                                    Text("进入工具 →", color = MaterialTheme.colorScheme.primary)
+                                }
+                            }
+                        }
+                        item { Text("直接切换可使用 Shizuku；导入导出无需启动服务。") }
+                        if (state.busy) item { ResultPanel(state) }
+                    } else {
+                        item { ResultPanel(state) }
+                        when (page) {
+                            "chinese" -> {
+                                item {
+                                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        FilterChip(mode == "direct", { mode = "direct" }, { Text("直接切换") }, Modifier.testTag("mode-direct"))
+                                        FilterChip(mode == "copy", { mode = "copy" }, { Text("导入副本") }, Modifier.testTag("mode-copy"))
+                                    }
+                                }
+                                if (mode == "direct") {
+                                    item {
+                                        Section("游戏原配置") {
+                                            Text(TARGET_PATH, style = MaterialTheme.typography.bodySmall)
+                                            if (source != null) {
+                                                Text(state.config?.languageLabel ?: state.configError ?: "尚未识别语言", fontWeight = FontWeight.Bold)
+                                                Text("访问方式：${source.accessMethod}")
+                                                Text("提供方：${source.authority}", style = MaterialTheme.typography.bodySmall)
+                                                Text(if (source.accessMethod == AccessMethod.SHIZUKU) "实际路径：${source.documentId}"
+                                                    else "实际 URI：${source.uri}", style = MaterialTheme.typography.bodySmall)
+                                                Text(if (source.accessMethod == AccessMethod.SHIZUKU) "手机重启后需重新启动 Shizuku 并检查授权。"
+                                                    else if (source.persisted) "已持久保存读取授权；实际访问仍需检查"
+                                                    else "授权未持久保存，重启后可能需要重新授权")
+                                                Text(if (direct) "当前可尝试写入，操作会自动备份并回读验证。" else "当前无法直接写回，请检查授权或导入副本。")
+                                                if (!source.knownTarget) Text("来源无法确认为游戏原配置，仅可读取、备份或导入副本。")
+                                                if (source.knownTarget && !source.confirmed) OutlinedButton({ dialog = "source" }, enabled = enabled) { Text("确认这是游戏原配置") }
+                                                source.lastVerifiedAt?.let { Text("历史写回回读通过：${formatTime(it)}；游戏生效需实际确认。", style = MaterialTheme.typography.bodySmall) }
+                                                state.configError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                                            } else Text("先连接并授权游戏配置，或导入可访问的副本。")
+                                            Button({ dialog = "switch" }, enabled = enabled && direct && !recovery && state.config?.language == Language.ENGLISH,
+                                                modifier = Modifier.fillMaxWidth().testTag("switch-chinese")) {
+                                                Text(if (state.config?.language == Language.CHINESE) "配置已设为中文" else "切换中文")
+                                            }
+                                            if (source != null) {
+                                                OutlinedButton(actions.refresh, enabled = enabled, modifier = Modifier.fillMaxWidth()) { Text("刷新配置") }
+                                                OutlinedButton(actions.saveBackup, enabled = enabled, modifier = Modifier.fillMaxWidth()) { Text("保存原始备份") }
+                                                if (!source.knownTarget || !source.writable) OutlinedButton({ mode = "copy"; actions.importLegacy() }, enabled = enabled,
+                                                    modifier = Modifier.fillMaxWidth().testTag("import-legacy")) { Text("导入为副本") }
+                                            }
+                                        }
+                                    }
+                                    item {
+                                        Section("连接与授权") {
+                                            Text(state.shizuku.message, Modifier.testTag("shizuku-status"))
+                                            Button(actions.connectShizuku, enabled = enabled && state.shizuku.phase != ShizukuPhase.CONNECTING,
+                                                modifier = Modifier.fillMaxWidth().testTag("connect-shizuku")) { Text("连接 Shizuku 并读取配置") }
+                                            OutlinedButton(actions.openShizuku, enabled = enabled, modifier = Modifier.fillMaxWidth()) { Text("打开 Shizuku") }
+                                            OutlinedButton({ page = "help" }, modifier = Modifier.fillMaxWidth()) { Text("安装与启动说明") }
+                                            Text("其他授权方式：系统可能限制 Android/data，MT 的权限不会授予工具箱。", style = MaterialTheme.typography.bodySmall)
+                                            OutlinedButton(actions.directory, enabled = enabled, modifier = Modifier.fillMaxWidth().testTag("select-directory")) { Text("授权配置目录") }
+                                            OutlinedButton(actions.file, enabled = enabled, modifier = Modifier.fillMaxWidth().testTag("select-file")) { Text("选择配置文件") }
+                                        }
+                                    }
+                                } else {
+                                    item {
+                                        Section("编辑副本") {
+                                            Text("只在应用内编辑，导入源文件不会被修改。导出后需手动替换游戏配置。")
+                                            state.workspace?.let { copy ->
+                                                Text(state.copyConfig?.languageLabel ?: state.copyError ?: "副本读取未完成", fontWeight = FontWeight.Bold)
+                                                Text("导入名称：${copy.source.displayName}")
+                                                Text("导入来源：${copy.source.uri}", style = MaterialTheme.typography.bodySmall)
+                                                Text("${copy.size} 字节 · ${formatTime(copy.updatedAt)}", style = MaterialTheme.typography.bodySmall)
+                                            }
+                                            state.copyError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                                            Button(actions.exportCopy, enabled = enabled && state.copyConfig?.language in listOf(Language.ENGLISH, Language.CHINESE),
+                                                modifier = Modifier.fillMaxWidth().testTag("export-copy")) {
+                                                Text(if (state.copyConfig?.language == Language.CHINESE) "导出当前中文副本" else "生成中文并导出")
+                                            }
+                                            OutlinedButton(actions.importCopy, enabled = enabled, modifier = Modifier.fillMaxWidth().testTag("import-copy")) {
+                                                Text(if (state.workspace == null) "导入配置副本" else "重新导入配置")
+                                            }
+                                            if (state.workspace != null) OutlinedButton(actions.saveCopyBackup, enabled = enabled && state.copyConfig != null,
+                                                modifier = Modifier.fillMaxWidth()) { Text("备份编辑副本") }
+                                        }
+                                    }
+                                }
+                                item {
+                                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        OutlinedButton({ page = "backups" }, modifier = Modifier.fillMaxWidth().testTag("open-backups")) { Text("备份历史") }
+                                        TextButton({ page = "help" }, Modifier.fillMaxWidth()) { Text("使用说明") }
+                                        TextButton({ page = "diagnostics" }, Modifier.fillMaxWidth().testTag("open-diagnostics")) { Text("诊断与记录") }
+                                    }
+                                }
+                            }
+                            "backups" -> {
+                                item { Text("完整恢复会还原音量、按键等全部设置。卸载或清除数据会丢失内部备份，请及时导出。") }
+                                if (state.backups.isEmpty()) item { Text("尚无备份") }
+                                items(state.backups, key = { it.id }) { backup ->
+                                    Section("${formatTime(backup.createdAt)} · ${backup.reason}") {
+                                        Text(if (backup.workspaceId != null) "编辑副本备份" else "外部配置备份", fontWeight = FontWeight.Bold)
+                                        Text("${backup.id.take(8)} · ${backup.size} 字节 · 原始语言 ${backup.language ?: "无法识别"}")
+                                        Text("来源：${backup.source.authority}", style = MaterialTheme.typography.bodySmall)
+                                        Text("来源 URI：${backup.source.uri}", style = MaterialTheme.typography.bodySmall)
+                                        Text("SHA-256：${backup.hash}", style = MaterialTheme.typography.bodySmall)
+                                        OutlinedButton({ actions.exportBackup(backup) }, enabled = enabled,
+                                            modifier = Modifier.fillMaxWidth().testTag("backup-export-${backup.id}")) { Text("导出原始备份") }
+                                        val canRestore = if (backup.workspaceId != null) backup.workspaceId == state.workspace?.id
+                                            else direct && state.pendingError == null && backup.source.identity == source?.identity &&
+                                                backup.source.accessMethod == source.accessMethod &&
+                                                (state.pending == null || (state.pending.source.identity == source.identity && state.pending.source.accessMethod == source.accessMethod))
+                                        OutlinedButton({ restoreBackup = backup }, enabled = enabled && canRestore,
+                                            modifier = Modifier.fillMaxWidth().testTag("backup-restore-${backup.id}")) {
+                                            Text(if (backup.workspaceId != null) "恢复编辑副本" else "完整恢复")
+                                        }
+                                        if (!canRestore) Text("当前来源不匹配或无法写回，可导出备份。", style = MaterialTheme.typography.bodySmall)
+                                    }
+                                }
+                            }
+                            "help" -> {
+                                item { Section("直接切换") {
+                                    Text("通过 Shizuku 的无线调试模式授权工具箱，不需要 Root 或连接电脑；仍依赖调试服务。仅支持主用户、shell UID 2000、API 13+ 和固定游戏包。")
+                                    OutlinedButton(actions.guide, enabled = enabled, modifier = Modifier.fillMaxWidth()) { Text("查看 Shizuku 官方说明") }
+                                    Text("先运行游戏生成配置，再完全退出。连接并确认来源后切换；工具箱自动备份并回读，完成后启动游戏确认中文。手机重启后需重新启动 Shizuku。")
+                                } }
+                                item { Section("导入与手动替换") {
+                                    Text("1. 用 MT 将 config.json 复制到可访问位置。\n2. 在导入副本模式选择文件，生成中文并导出。\n3. 完全退出游戏，用 MT 将导出文件替换原配置。\n4. 最终名称必须为 config.json，再启动游戏确认中文。")
+                                    Text("导出成功仅表示文件保存并回读通过，尚未替换游戏配置。需恢复时导出原始备份，用 MT 放回原位置。")
+                                } }
+                                item { Section("出现未完成写入时") {
+                                    Text("暂勿启动游戏。重新连接原来源，校验上次结果；不一致时进入备份历史完整恢复，或导出原始备份手动恢复。副本恢复只影响编辑副本。")
+                                } }
+                            }
+                            "diagnostics" -> {
+                                item { Section("环境与记录") {
+                                    Text(environment, style = MaterialTheme.typography.bodySmall)
+                                    Text("Shizuku ${state.shizuku.installedVersion ?: "未安装"} · API ${state.shizuku.apiVersion ?: "未知"} · UID ${state.shizuku.uid ?: "未知"}")
+                                    Text(state.shizuku.message)
+                                    OutlinedTextField(gameVersion, { gameVersion = it.take(100) }, enabled = enabled,
+                                        label = { Text("游戏发行版本") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                                    OutlinedTextField(mtVersion, { mtVersion = it.take(100) }, enabled = enabled,
+                                        label = { Text("MT 版本") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                                    OutlinedButton({ actions.report(EnvironmentNotes(gameVersion, mtVersion)) }, enabled = enabled,
+                                        modifier = Modifier.fillMaxWidth()) { Text("导出诊断记录") }
+                                    Text("记录保存在本机，不包含配置内容。游戏中文显示和设备重启需人工验收。")
+                                } }
+                                item { Section("最近操作") { state.events.takeLast(10).reversed().forEach { Text(it.substringAfter(" | "), style = MaterialTheme.typography.bodySmall) } } }
+                            }
                         }
                     }
                 }
             }
-            if (source != null) item {
-                Section("实际来源与授权") {
-                    Text("文件：${source.displayName}")
-                    Text("提供方：${source.authority}", style = MaterialTheme.typography.bodySmall)
-                    Text(if (source.accessMethod == AccessMethod.SHIZUKU) "实际路径：${source.documentId}" else "实际 URI：${source.uri}", style = MaterialTheme.typography.bodySmall)
-                    Text("入口：${source.selection}")
-                    Text(if (source.accessMethod == AccessMethod.SHIZUKU) "Shizuku 授权与服务每次均需检查；设备重启后重新启动服务"
-                        else if (source.persisted) "已持久保存读取授权；实际访问仍需检查" else "授权未持久保存，重启后可能需要重新授权")
-                    Text(if (source.writable && accessReady) "当前可尝试写入，需实际写回验证" else "当前无法直接写回，请检查授权和服务")
-                    Text(if (!source.knownTarget) "来源无法确认为游戏原配置，仅可读取和备份导出" else
-                        if (source.confirmed) "已由你确认游戏原配置来源" else "路径匹配目标，请核对并确认来源")
-                    source.lastVerifiedAt?.let { Text("历史写回回读通过：${formatTime(it)}；不代表游戏已生效。") }
-                    Text(state.config?.languageLabel ?: state.configError ?: "尚未识别语言", fontWeight = FontWeight.Bold)
-                    if (source.knownTarget && !source.confirmed) OutlinedButton({ dialog = "source" }, enabled = enabled) { Text("确认这是游戏原配置") }
-                    if (state.config?.language == Language.CHINESE) Text("无需重复写入；读取中文配置不能证明写回能力。")
-                    Button({ dialog = "switch" }, enabled = enabled && direct && !recovery && state.config?.language == Language.ENGLISH,
-                        modifier = Modifier.fillMaxWidth().testTag("switch-chinese")) { Text("验证并切换中文") }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(actions.refresh, enabled = enabled) { Text("刷新配置") }
-                        OutlinedButton(actions.saveBackup, enabled = enabled) { Text("保存原始备份") }
-                    }
-                }
-            }
-            item {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("原始备份", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    Text("完整恢复会同时还原音量、按键等其他设置。内部备份在卸载或清除数据后丢失，请及时导出。", style = MaterialTheme.typography.bodySmall)
-                    if (state.backups.isEmpty()) Text("尚无备份")
-                }
-            }
-            items(state.backups, key = { it.id }) { backup ->
-                Section("${formatTime(backup.createdAt)} · ${backup.reason}") {
-                    Text("${backup.id.take(8)} · ${backup.size} 字节 · 原始语言 ${backup.language ?: "无法识别"}")
-                    Text("来源：${if (backup.source.knownTarget) "游戏原配置" else "未确认来源"} · ${backup.source.authority}", style = MaterialTheme.typography.bodySmall)
-                    Text("来源 URI：${backup.source.uri}", style = MaterialTheme.typography.bodySmall)
-                    Text("SHA-256：${backup.hash}", style = MaterialTheme.typography.bodySmall)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton({ actions.exportBackup(backup) }, enabled = enabled) { Text("导出原始备份") }
-                        OutlinedButton({ restoreBackup = backup }, enabled = enabled && direct && state.pendingError == null && backup.source.accessMethod == source?.accessMethod &&
-                            backup.source.identity == source?.identity && (state.pending == null || state.pending.source.identity == source?.identity)) { Text("完整恢复") }
-                    }
-                }
-            }
-            item {
-                Section("设备与验收记录") {
-                    Text(environment, style = MaterialTheme.typography.bodySmall)
-                    OutlinedTextField(gameVersion, { gameVersion = it.take(100) }, enabled = enabled,
-                        label = { Text("游戏发行版本（手动填写）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                    OutlinedTextField(mtVersion, { mtVersion = it.take(100) }, enabled = enabled,
-                        label = { Text("MT 版本（手动填写）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                    OutlinedButton({ actions.report(EnvironmentNotes(gameVersion, mtVersion)) }, enabled = enabled,
-                        modifier = Modifier.fillMaxWidth()) { Text("导出验证记录") }
-                    Text("记录仅保存在本机，不包含配置内容。游戏中文显示、设备重启后的授权复用需人工验收。", style = MaterialTheme.typography.bodySmall)
-                }
-            }
-            if (state.events.isNotEmpty()) item {
-                Section("最近操作") { state.events.takeLast(6).reversed().forEach { Text(it.substringAfter(" | "), style = MaterialTheme.typography.bodySmall) } }
-            }
         }
     }
     if (dialog == "source" && source != null) ConfirmDialog("确认实际来源",
-        "目标：$TARGET_PATH\n\n实际来源：${source.uri}\n\n请确认这就是当前游戏使用的原配置。", "确认来源", { dialog = null }) {
-        dialog = null; actions.confirm()
-    }
+        "目标：$TARGET_PATH\n\n实际来源：${if (source.accessMethod == AccessMethod.SHIZUKU) source.documentId else source.uri}\n\n确认这就是当前游戏使用的原配置。",
+        "确认来源", { dialog = null }, enabled) { dialog = null; actions.confirm() }
     if (dialog == "switch") ConfirmDialog("先完全退出游戏",
-        "请确认游戏已完全退出。应用会先校验原始备份，再覆盖写回原文件。提供方写入可能中断；失败时请先恢复备份，再启动游戏。",
-        "已退出，开始验证", { dialog = null }) { dialog = null; actions.switch() }
+        "工具箱会先核验原始备份，再写回配置。请确认游戏已完全退出；写入失败时先恢复备份，再启动游戏。",
+        "已退出，开始验证", { dialog = null }, enabled && direct && !recovery) { dialog = null; actions.switch() }
+    state.importAwaiting?.let { imported -> ConfirmDialog("替换当前编辑副本",
+        "新文件：${imported.displayName}\n会先备份当前编辑副本，再导入新文件。历史备份继续保留，导入源文件不会修改。",
+        "备份并替换", actions.cancelImport, enabled, actions.confirmImport) }
     restoreBackup?.let { backup ->
-        ConfirmDialog("完整恢复配置", "备份时间：${formatTime(backup.createdAt)}\n来源：${backup.source.uri}\n\n音量、按键等设置也会恢复。请完全退出游戏；应用会先备份当前内容再恢复。",
-            "已退出，完整恢复", { restoreBackup = null }) { restoreBackup = null; actions.restore(backup) }
+        val copy = backup.workspaceId != null
+        ConfirmDialog(if (copy) "恢复编辑副本" else "完整恢复配置",
+            "备份时间：${formatTime(backup.createdAt)}\n来源：${backup.source.uri}\n\n会先备份当前内容，再完整恢复按键、音量等所有设置。" +
+                if (copy) "仅恢复应用内副本，尚未替换游戏配置。" else "请确认游戏已完全退出。",
+            if (copy) "恢复副本" else "已退出，完整恢复", { restoreBackup = null }, enabled) {
+            restoreBackup = null; if (copy) actions.restoreCopy(backup) else actions.restore(backup)
+        }
+    }
+}
+
+@Composable
+private fun ResultPanel(state: ValidationState) {
+    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("操作结果", fontWeight = FontWeight.Bold)
+            Text(state.message, Modifier.testTag("operation-result"))
+            if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+        }
+    }
+}
+
+@Composable
+private fun RecoveryPanel(state: ValidationState, verifyEnabled: Boolean, verify: () -> Unit, backups: () -> Unit) {
+    Card(Modifier.fillMaxWidth().testTag("recovery-warning"), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("需要检查或恢复", fontWeight = FontWeight.Bold)
+            Text("暂勿启动游戏。存在未完成或无法读取的外部操作记录，请连接原来源检查或恢复备份。")
+            state.pendingError?.let { Text(it) }
+            state.pending?.let { Text("${formatTime(it.startedAt)} · 原始备份 ${it.backupId.take(8)}") }
+            OutlinedButton(verify, enabled = verifyEnabled && state.pending != null, modifier = Modifier.fillMaxWidth()) { Text("重新校验上次结果") }
+            OutlinedButton(backups, modifier = Modifier.fillMaxWidth()) { Text("查看恢复备份") }
+        }
     }
 }
 
@@ -220,14 +333,14 @@ fun ValidationContent(state: ValidationState, environment: String, actions: Vali
 private fun Section(title: String, content: @Composable ColumnScope.() -> Unit) {
     OutlinedCard(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            content()
+            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold); content()
         }
     }
 }
 
 @Composable
-private fun ConfirmDialog(title: String, text: String, confirmLabel: String, dismiss: () -> Unit, confirm: () -> Unit) {
-    AlertDialog(onDismissRequest = dismiss, title = { Text(title) }, text = { Text(text) },
-        confirmButton = { TextButton(confirm) { Text(confirmLabel) } }, dismissButton = { TextButton(dismiss) { Text("取消") } })
+private fun ConfirmDialog(title: String, text: String, label: String, dismiss: () -> Unit, enabled: Boolean, confirm: () -> Unit) {
+    AlertDialog(onDismissRequest = { if (enabled) dismiss() }, title = { Text(title) }, text = { Text(text) },
+        confirmButton = { TextButton(confirm, enabled = enabled) { Text(label) } },
+        dismissButton = { TextButton(dismiss, enabled = enabled) { Text("取消") } })
 }

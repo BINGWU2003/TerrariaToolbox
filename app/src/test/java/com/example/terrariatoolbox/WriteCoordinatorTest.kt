@@ -37,9 +37,9 @@ private class MemoryBackups : BackupRepository {
     val entries = mutableListOf<Pair<BackupRecord, ByteArray>>()
     var fail = false
     var corrupt = false
-    override fun save(source: SourceInfo, bytes: ByteArray, reason: String, config: ConfigDocument?): BackupRecord {
+    override fun save(source: SourceInfo, bytes: ByteArray, reason: String, config: ConfigDocument?, workspaceId: String?): BackupRecord {
         if (fail) throw ToolException("备份失败")
-        val record = BackupRecord("backup-${entries.size}", 1, source, bytes.size.toLong(), contentHash(bytes), config?.languageNumber, config?.version, reason)
+        val record = BackupRecord("backup-${entries.size}", 1, source, bytes.size.toLong(), contentHash(bytes), config?.languageNumber, config?.version, reason, workspaceId = workspaceId)
         entries.add(record to bytes.copyOf())
         return record
     }

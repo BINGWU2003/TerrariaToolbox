@@ -57,10 +57,10 @@ class FileBackupRepository(
     private val writer: AtomicWriter,
     private val clock: () -> Long = System::currentTimeMillis,
 ) : BackupRepository {
-    override fun save(source: SourceInfo, bytes: ByteArray, reason: String, config: ConfigDocument?): BackupRecord {
+    override fun save(source: SourceInfo, bytes: ByteArray, reason: String, config: ConfigDocument?, workspaceId: String?): BackupRecord {
         try {
             val record = BackupRecord(UUID.randomUUID().toString(), clock(), source, bytes.size.toLong(),
-                contentHash(bytes), config?.languageNumber, config?.version, reason)
+                contentHash(bytes), config?.languageNumber, config?.version, reason, workspaceId = workspaceId)
             writer.write(dataFile(record.id), bytes)
             if (contentHash(readAtomic(dataFile(record.id))) != record.hash) throw ToolException("原始备份回读校验失败。")
             // Metadata is committed last: an orphan .bin is never presented as a valid backup.
@@ -98,11 +98,13 @@ class FileBackupRepository(
         put("id", id); put("createdAt", createdAt); put("source", source.toJson()); put("size", size)
         put("hash", hash); put("reason", reason); put("tool", tool); put("fileType", fileType)
         language?.let { put("language", it) }; gameVersion?.let { put("gameVersion", it) }
+        workspaceId?.let { put("workspaceId", it) }
     }
     private fun parseRecord(bytes: ByteArray): BackupRecord = parseObject(bytes).let {
         BackupRecord(it.string("id"), it.long("createdAt"), it.getValue("source").jsonObject.source(),
             it.long("size"), it.string("hash"), (it["language"] as? JsonPrimitive)?.content,
-            (it["gameVersion"] as? JsonPrimitive)?.content, it.string("reason"), it.string("tool"), it.string("fileType"))
+            (it["gameVersion"] as? JsonPrimitive)?.content, it.string("reason"), it.string("tool"), it.string("fileType"),
+            (it["workspaceId"] as? JsonPrimitive)?.content)
     }
 }
 
