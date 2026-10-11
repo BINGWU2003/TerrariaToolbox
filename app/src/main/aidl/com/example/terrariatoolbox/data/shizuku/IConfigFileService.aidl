@@ -1,0 +1,10 @@
+package com.example.terrariatoolbox.data.shizuku;
+import android.os.Bundle;
+import android.os.ParcelFileDescriptor;
+
+interface IConfigFileService {
+    void destroy() = 16777114;
+    Bundle probe() = 1;
+    ParcelFileDescriptor openRead() = 2;
+    ParcelFileDescriptor openOverwrite(String expectedBeforeHash) = 3;
+}
