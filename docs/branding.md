@@ -1,24 +1,9 @@
-# 项目 Logo
+# 项目品牌与图标
 
-2026-10-11 选用 A1 蓝色史莱姆。唯一的 Logo 图片为：
+应用名称为「泰拉瑞亚工具箱」，APK 使用 `TerrariaToolbox-v<版本>.apk` 命名，Android 包名为 `io.github.bingwu2003.terrariatoolbox`。
 
-`app/src/main/res/drawable-nodpi/terraria_toolbox_logo.png`
+蓝色史莱姆 Logo 的唯一图片为 `app/src/main/res/drawable-nodpi/terraria_toolbox_logo.png`，尺寸 1536 × 1536。README 与 Android 图标共用原始 PNG。
 
-这是 1536 × 1536 的原始 PNG，保持生成结果原样。README 与 Android 图标共用这张图片。
+Manifest 的 `android:icon` 和 `android:roundIcon` 都引用 `@mipmap/ic_launcher`。`mipmap-anydpi/ic_launcher.xml` 将原始 PNG 放入自适应图标中央的 72 dp 可见区域，启动器按自身形状应用遮罩。图标使用完整彩色图片，系统主题图标采用启动器回退行为。
 
-## Android 配置
-
-Manifest 的 `android:icon` 和 `android:roundIcon` 都引用 `@mipmap/ic_launcher`。`mipmap-anydpi/ic_launcher.xml` 直接引用原始 PNG，并将其放入自适应图标中央的 72 dp 可见区域；启动器按自己的圆形或其他形状应用遮罩。项目最低支持 Android 14，使用这一份自适应资源即可。
-
-采用完整彩色图片显示，系统主题图标使用启动器的回退行为。
-
-## 更换 Logo
-
-1. 用新的正方形 PNG 替换 `app/src/main/res/drawable-nodpi/terraria_toolbox_logo.png`，保留文件名。
-2. 构建 APK：`./gradlew :app:assembleDebug`；Windows 使用 `./gradlew.bat :app:assembleDebug`。
-
-Logo 配置不需要 Python、Pillow、NumPy 或导出命令。图片由 Android 资源系统缩放与打包。
-
-## 生成来源
-
-图片通过 imgrelay 的 `pqh` 供应商生成，请求模型为 `gpt-image-2.5-flare`；上游未单独报告底层模型。原始批次位于 `output/imagegen/terraria-logo-20261011-141750/`。
+更换时用正方形 PNG 替换上述图片，保留文件名，然后按 README 配置签名并运行 `:app:prepareRelease`。图片由 Android 资源系统缩放与打包。

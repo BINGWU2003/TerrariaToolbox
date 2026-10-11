@@ -18,3 +18,10 @@
 local.properties
 
 output/
+
+# Permanent signing credentials stay outside version control.
+*.jks
+*.keystore
+*.p12
+signing.properties
+keystore.properties

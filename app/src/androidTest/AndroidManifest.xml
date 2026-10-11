@@ -2,13 +2,13 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application>
         <provider
-            android:name="com.example.terrariatoolbox.TestControlProvider"
-            android:authorities="com.example.terrariatoolbox.tests.control"
+            android:name="io.github.bingwu2003.terrariatoolbox.TestControlProvider"
+            android:authorities="io.github.bingwu2003.terrariatoolbox.tests.control"
             android:exported="true" />
         <!-- Only installed with the test APK; never shipped in the toolbox APK. -->
         <provider
-            android:name="com.example.terrariatoolbox.TestDocumentsProvider"
-            android:authorities="com.example.terrariatoolbox.tests.documents"
+            android:name="io.github.bingwu2003.terrariatoolbox.TestDocumentsProvider"
+            android:authorities="io.github.bingwu2003.terrariatoolbox.tests.documents"
             android:permission="android.permission.MANAGE_DOCUMENTS"
             android:exported="true"
             android:grantUriPermissions="true" />
