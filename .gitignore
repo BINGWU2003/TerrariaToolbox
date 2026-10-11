@@ -25,3 +25,5 @@ output/
 *.p12
 signing.properties
 keystore.properties
+
+video
