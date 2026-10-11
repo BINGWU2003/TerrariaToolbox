@@ -87,7 +87,7 @@ class ValidationViewModel(application: Application) : AndroidViewModel(applicati
                 "连接 Shizuku 后，即可切换游戏语言。"
             }
             else if (selected.accessMethod == AccessMethod.SHIZUKU) "已找到上次使用的游戏设置，请查看首页的 Shizuku 连接状态。"
-            else "请在首页连接 Shizuku。旧版本的备份仍可在「更多操作」中导出。"
+            else "请连接 Shizuku 后使用工具箱。"
         }
     }
 
@@ -148,7 +148,7 @@ class ValidationViewModel(application: Application) : AndroidViewModel(applicati
         if (!result.changed) "当前已经是$label，无需再次切换。"
         else {
             session.saveSource(source.copy(lastVerifiedAt = result.verifiedAt))
-            "已切换为$label，重新打开游戏即可生效。原来的设置已自动备份。"
+            "已切换为$label，重新打开游戏即可生效。"
         }
     }
 
@@ -164,13 +164,6 @@ class ValidationViewModel(application: Application) : AndroidViewModel(applicati
         val result = coordinator.verifyPending(source)
         session.saveSource(source.copy(lastVerifiedAt = result.verifiedAt))
         "上次操作已完成，游戏设置检查正常。现在可以重新打开游戏。"
-    }
-
-    fun saveOriginalBackup() = task("备份当前设置") {
-        val source = requireShizukuSource()
-        val bytes = documents.read(source.uri)
-        backups.save(source, bytes, "用户主动备份", runCatching { processor.inspect(bytes) }.getOrNull())
-        "当前设置已备份。需要长期保留时，可在「恢复备份」中导出；卸载工具箱会删除本机备份。"
     }
 
     fun prepareBackupExport(record: BackupRecord, ready: (ExportSpec) -> Unit) = task("准备备份导出", after = {

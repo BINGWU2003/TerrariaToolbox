@@ -3,6 +3,7 @@ package com.example.terrariatoolbox.domain
 import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
+import java.io.ByteArrayOutputStream
 import java.security.MessageDigest
 import java.util.UUID
 import java.util.zip.ZipEntry
@@ -20,7 +21,7 @@ data class SaveTarget(val edition: GameEdition, val account: String = "") {
 data class GameSave(val name: String, val size: Long, val modified: Long) {
     val kind get() = if (SaveNames.directory(name) == "Players") SaveKind.PLAYER else SaveKind.WORLD
 }
-data class StagedSave(val name: String, val file: File) {
+data class StagedSave(val name: String, val file: File, val edition: GameEdition? = null, val origin: SaveOrigin = SaveOrigin.UNKNOWN) {
     val kind get() = if (SaveNames.directory(name) == "Players") SaveKind.PLAYER else SaveKind.WORLD
 }
 data class SaveImportResult(val original: String, val savedAs: String? = null, val error: String? = null)
@@ -63,11 +64,14 @@ class SaveStager(private val root: File) {
                 require(size > 0) { "存档文件为空。" }
                 output.flush(); output.fd.sync()
             }
-            return StagedSave(name, file)
+            val edition = worldEdition(name, file)
+            return StagedSave(name, file, edition, if (edition == null) SaveOrigin.UNKNOWN else SaveOrigin.WORLD_HEADER)
         } catch (error: Exception) { file.delete(); throw error }
     }
     private fun unzip(input: InputStream): List<StagedSave> {
         val saves = mutableListOf<StagedSave>()
+        val paths = mutableListOf<String>()
+        var manifest: SaveBundle? = null
         try {
             ZipInputStream(input).use { zip ->
                 var entries = 0
@@ -78,10 +82,23 @@ class SaveStager(private val root: File) {
                     require(!entry.name.contains('\\') && !entry.name.startsWith('/') && parts.none { it == ".." || it == "." }) { "ZIP 包含不安全的路径。" }
                     if (entry.isDirectory) { zip.closeEntry(); continue }
                     val name = parts.last()
-                    if (name.endsWith(".plr", true) || name.endsWith(".wld", true)) {
+                    if (entry.name == SAVE_BUNDLE_MANIFEST) {
+                        if (manifest != null) throw SaveCompatibilityException("ZIP 包含重复的来源信息，已取消整批导入。")
+                        val bytes = ByteArrayOutputStream()
+                        val buffer = ByteArray(8192)
+                        while (true) {
+                            val n = zip.read(buffer); if (n < 0) break
+                            total += n
+                            if (bytes.size() + n > MAX_MANIFEST_BYTES || total > MAX_SAVE_BATCH_BYTES)
+                                throw SaveCompatibilityException("ZIP 来源信息过大，已取消整批导入。")
+                            bytes.write(buffer, 0, n)
+                        }
+                        manifest = SaveBundle.read(bytes.toByteArray())
+                    } else if (name.endsWith(".plr", true) || name.endsWith(".wld", true)) {
                         val directory = SaveNames.directory(name)
                         require(parts.size == 1 || (parts.size == 2 && parts.first().equals(directory, true))) { "ZIP 存档应位于 Players 或 Worlds 文件夹。" }
                         saves += copy(name, zip)
+                        paths += entry.name
                     }
                     // Limit ignored entries too: closeEntry otherwise decompresses without a bound.
                     val buffer = ByteArray(8192)
@@ -93,7 +110,20 @@ class SaveStager(private val root: File) {
                 }
             }
             require(saves.isNotEmpty()) { "ZIP 中没有 .plr 或 .wld 存档。" }
-            return saves
+            val bundle = manifest
+            val result = if (bundle == null) saves.toList() else {
+                if (paths.distinct().size != paths.size || paths.toSet() != bundle.saves.map { it.path }.toSet())
+                    throw SaveCompatibilityException("ZIP 文件清单与来源信息不一致，已取消整批导入。请重新导出。")
+                val records = bundle.saves.associateBy { it.path }
+                saves.mapIndexed { index, save ->
+                    val record = records.getValue(paths[index])
+                    if (save.file.length() != record.size || saveFileHash(save.file) != record.hash)
+                        throw SaveCompatibilityException("${save.name} 与 ZIP 文件校验信息不一致，已取消整批导入。")
+                    save.withEdition(bundle.edition, SaveOrigin.BUNDLE)
+                }
+            }
+            ensureSingleEdition(result)
+            return result
         } catch (error: Exception) { saves.forEach { it.file.delete() }; throw error }
     }
 }
@@ -102,26 +132,33 @@ fun exportSaves(remote: RemoteSaveFiles, target: SaveTarget, saves: List<GameSav
     require(saves.isNotEmpty() && saves.size <= MAX_SAVE_COUNT)
     require(saves.sumOf { it.size } <= MAX_SAVE_BATCH_BYTES) { "本次导出超过 256 MB，请分批选择。" }
     var total = 0L
-    fun transfer(save: GameSave, output: OutputStream) {
+    fun transfer(save: GameSave, output: OutputStream): BundleSave {
         var size = 0L
+        val digest = MessageDigest.getInstance("SHA-256")
         remote.read(target, save.name, object : OutputStream() {
             override fun write(value: Int) { write(byteArrayOf(value.toByte()), 0, 1) }
             override fun write(bytes: ByteArray, offset: Int, length: Int) {
                 size += length; total += length
                 require(size <= MAX_SAVE_BYTES && total <= MAX_SAVE_BATCH_BYTES) { "存档内容超过导出上限，请分批处理。" }
+                digest.update(bytes, offset, length)
                 output.write(bytes, offset, length)
             }
         })
         require(size > 0) { "存档文件为空，已取消导出。" }
+        return BundleSave("${save.kind.directory}/${save.name}", size, digest.digest().joinToString("") { "%02x".format(it) })
     }
     file.outputStream().use { output ->
         if (saves.size == 1) transfer(saves.single(), output)
         else ZipOutputStream(output).use { zip ->
-            saves.forEach { save ->
+            val records = saves.map { save ->
                 zip.putNextEntry(ZipEntry("${save.kind.directory}/${save.name}"))
-                transfer(save, zip)
+                val record = transfer(save, zip)
                 zip.closeEntry()
+                record
             }
+            zip.putNextEntry(ZipEntry(SAVE_BUNDLE_MANIFEST))
+            zip.write(SaveBundle(target.edition, records).bytes())
+            zip.closeEntry()
         }
     }
 }

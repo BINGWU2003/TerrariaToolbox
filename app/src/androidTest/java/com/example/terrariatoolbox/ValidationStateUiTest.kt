@@ -6,6 +6,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.test.platform.app.InstrumentationRegistry
 import com.example.terrariatoolbox.domain.*
 import com.example.terrariatoolbox.feature.chinese.*
+import com.example.terrariatoolbox.feature.saves.*
 import com.example.terrariatoolbox.ui.theme.TerrariaToolboxTheme
 import org.junit.Assert.*
 import org.junit.Rule
@@ -89,19 +90,18 @@ class ValidationStateUiTest {
         compose.onNodeWithTag("open-chinese").performClick()
         scroll(hasTestTag("switch-chinese")); compose.onNodeWithTag("switch-chinese").assertIsNotEnabled()
         compose.onNodeWithTag("switch-english").assertIsNotEnabled()
-        scroll(hasTestTag("more-actions")); compose.onNodeWithTag("more-actions").performClick()
+        compose.onNodeWithTag("open-settings").performClick()
         scroll(hasTestTag("open-diagnostics")); compose.onNodeWithTag("open-diagnostics").performClick()
         compose.onNodeWithTag("recovery-warning").assertExists()
-        compose.onNodeWithTag("navigate-home").performClick()
+        compose.onNodeWithTag("nav-home").performClick()
         compose.onNodeWithTag("recovery-warning").assertExists()
     }
 
     @Test fun restoreExplainsAllSettingsAndRequiresSeparateExitConfirmation() {
         val backup = BackupRecord("test", 1, source, 20, "hash", "1", null, "切换中文前")
         var restores = 0
-        show(state(7).copy(backups = listOf(backup)), ValidationActions(restore = { restores++ }))
-        scroll(hasTestTag("more-actions")); compose.onNodeWithTag("more-actions").performClick()
-        scroll(hasTestTag("open-backups")); compose.onNodeWithTag("open-backups").performClick()
+        show(state(7).copy(backups = listOf(backup), pending = PendingOperation(source, "test", "before", "after", "switch", 1)), ValidationActions(restore = { restores++ }))
+        compose.onNodeWithTag("open-recovery").performClick()
         scroll(hasTestTag("backup-restore-test")); compose.onNodeWithTag("backup-restore-test").performClick()
         compose.onNodeWithText("语言、音量和按键等设置都会还原", substring = true).assertExists()
         assertEquals(0, restores)
@@ -115,6 +115,51 @@ class ValidationStateUiTest {
         compose.onNodeWithTag("navigate-back").performClick()
         compose.onNodeWithTag("home-list").performScrollToNode(hasTestTag("operation-result"))
         compose.onNodeWithTag("operation-result").assertExists()
+    }
+
+    @Test fun dailyBackupActionsAreAbsentFromToolsAndSettings() {
+        val backup = BackupRecord("daily", 1, source, 20, "hash", "1", null, "切换中文前")
+        show(state().copy(backups = listOf(backup)))
+        compose.onAllNodesWithText("备份当前设置").assertCountEquals(0)
+        compose.onNodeWithTag("open-recovery").assertDoesNotExist()
+        compose.onNodeWithTag("open-settings").performClick()
+        compose.onNodeWithTag("open-backups").assertDoesNotExist()
+        compose.onNodeWithTag("backup-restore-daily").assertDoesNotExist()
+    }
+
+    @Test fun corruptPendingRecordKeepsRecoveryExportAvailableAndCannotRestore() {
+        val backup = BackupRecord("damaged", 1, source, 20, "hash", "1", null, "切换中文前")
+        var exports = 0
+        show(state().copy(backups = listOf(backup), pendingError = "操作记录损坏"), ValidationActions(exportBackup = { exports++ }))
+        compose.onNodeWithTag("open-recovery").performClick()
+        scroll(hasTestTag("backup-restore-damaged"))
+        compose.onNodeWithTag("backup-restore-damaged").assertIsNotEnabled()
+        scroll(hasTestTag("backup-export-damaged"))
+        compose.onNodeWithTag("backup-export-damaged").assertIsEnabled().performClick()
+        assertEquals(1, exports)
+    }
+
+    @Test fun completedHomeImportSurvivesHelpReturnWithoutReplayingCommand() {
+        var begins = 0
+        val current = mutableStateOf(SaveState(loaded = true))
+        compose.setContent { TerrariaToolboxTheme {
+            ValidationContent(state(), "测试设备", ValidationActions(), initialPage = "home", saveState = current.value,
+                saveContent = { entry, consumed, connect -> SaveContent(current.value, true,
+                    SaveActions(begin = { begins++ }, goHome = connect), entry, consumeEntry = consumed) })
+        } }
+        compose.onNodeWithTag("home-list").performScrollToNode(hasTestTag("home-import"))
+        compose.onNodeWithTag("home-import").performClick()
+        compose.runOnIdle { current.value = current.value.copy(importStep = ImportStep.RESULT,
+            importSummary = "导入完成：1 个成功，0 个未完成。", results = listOf(SaveImportResult("Vor.plr", "Vor.plr"))) }
+        compose.onNodeWithTag("import-summary").assertTextContains("1 个成功", substring = true)
+        compose.onNodeWithTag("open-settings").performClick()
+        compose.onNodeWithTag("navigate-back").performClick()
+        compose.onNodeWithTag("import-summary").assertTextContains("1 个成功", substring = true)
+        assertEquals(1, begins)
+        compose.onNodeWithTag("view-imported-saves").performClick()
+        compose.onNodeWithTag("nav-home").performClick()
+        compose.onNodeWithTag("nav-saves").performClick()
+        compose.onNodeWithTag("start-import").assertExists()
     }
 
     private fun show(state: ValidationState, actions: ValidationActions = ValidationActions()) {

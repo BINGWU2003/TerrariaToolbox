@@ -103,11 +103,13 @@ class BinderConfigFiles(private val remote: IConfigFileService) : RemoteConfigFi
         } catch (e: ToolException) { throw e } catch (e: Exception) { saveFailure(e) }
     }
     override fun import(target: SaveTarget, save: StagedSave): String = try {
+        checkSaveEdition(target, save)
         ParcelFileDescriptor.open(save.file, ParcelFileDescriptor.MODE_READ_ONLY).use { source ->
             remote.importSave(target.edition.code, target.account, save.name, source, save.file.length(), saveFileHash(save.file)).getString("name")
                 ?: throw ToolException("没有收到导入结果，请刷新列表检查。")
         }
-    } catch (e: ToolException) { throw e } catch (e: Exception) { saveFailure(e) }
+    } catch (e: SaveCompatibilityException) { throw ToolException(e.message.orEmpty()) }
+    catch (e: ToolException) { throw e } catch (e: Exception) { saveFailure(e) }
     override val alive get() = remote.asBinder().isBinderAlive
     private fun failure(error: Exception, openingWrite: Boolean = false): Nothing {
         val code = if (error is IllegalArgumentException) Regex("^FILE_ERROR:([1-6])$").matchEntire(error.message.orEmpty())?.groupValues?.get(1)?.toInt() else null

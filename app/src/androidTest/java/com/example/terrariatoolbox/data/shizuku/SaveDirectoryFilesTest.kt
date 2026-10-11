@@ -88,7 +88,7 @@ class SaveDirectoryFilesTest {
         val remote = BinderConfigFiles(binder).saves()
         val file = File(root, "large").apply { writeBytes(ByteArray(3 * 1024 * 1024) { (it % 251).toByte() }) }
         val target = SaveTarget(GameEdition.INTERNATIONAL)
-        assertEquals("All + Items (3).wld", remote.import(target, StagedSave("All + Items (3).wld", file)))
+        assertEquals("All + Items (3).wld", remote.import(target, StagedSave("All + Items (3).wld", file, target.edition, SaveOrigin.USER)))
         val output = File(root, "export")
         output.outputStream().use { remote.read(target, "All + Items (3).wld", it) }
         assertEquals(saveFileHash(file), saveFileHash(output))

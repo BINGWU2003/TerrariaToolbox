@@ -2,19 +2,19 @@
 
 <img src="app/src/main/res/drawable-nodpi/terraria_toolbox_logo.png" width="96" alt="泰拉瑞亚工具箱 Logo" />
 
-Kotlin + Jetpack Compose 原生 Android 应用。当前为 **1.4 / versionCode 5**，通过 Shizuku 管理国服、国际服的角色与世界存档，并将国际服游戏语言切换为中文或英文。语言切换保留音量、按键等设置，并在每次切换前自动备份。
+Kotlin + Jetpack Compose 原生 Android 应用。当前为 **1.6 / versionCode 7**，通过 Shizuku 管理国服、国际服的角色与世界存档，并将国际服游戏语言切换为中文或英文。存档资源、导入来源与目标按服隔离。语言切换保留音量、按键等设置，内部自动备份仅用于异常恢复。
 
-首页提供 Shizuku 连接状态和安装、启动说明，以及「存档管理」「游戏语言」两个工具入口。「更多操作」包含设置备份和问题排查。页面跟随系统浅色、深色和字体大小，日常说明面向普通玩家。
+底部导航为「首页 / 存档 / 工具」。首页提供连接状态、导入与导出快捷任务、当前语言和实际操作记录。存档页提供角色／世界顶部分类、搜索、排序与跨分类多选；导入采用先选文件、再确认目标的五步引导。顶部「帮助」统一连接说明与问题排查。日常设置备份、历史与恢复入口已移除，仅写入异常时显示恢复入口。页面跟随系统浅色、深色和字体大小。
 
 ## 使用与安装
 
-查看 [1.4 使用说明](docs/v1.4-usage.md)。可安装 APK：`artifacts/v1.4/TerrariaToolbox-v1.4-debug.apk`，摘要在同目录 `SHA256SUMS.txt`。使用原 Debug 签名，可覆盖安装旧版本并保留设置备份与未完成操作记录。
+查看 [1.6 使用说明](docs/v1.6-usage.md)。可安装 APK：`artifacts/v1.6/TerrariaToolbox-v1.6-debug.apk`，摘要在同目录 `SHA256SUMS.txt`。使用原 Debug 签名，可覆盖安装旧版本并保留内部备份与未完成操作记录。
 
-游戏目录只通过 Shizuku 访问。系统文件选择器用于选择玩家自己的存档及保存导出文件；不需要授予游戏目录的 SAF 权限。旧版配置副本流程继续停用，旧设置备份仍可查看和导出。
+游戏目录只通过 Shizuku 访问。系统文件选择器用于选择玩家自己的存档及保存导出文件；不需要授予游戏目录的 SAF 权限。旧版配置副本流程继续停用，旧设置备份数据保留，日常列表与导出入口移除。
 
-存档支持内置 4 个角色与 1 个世界、手机 .plr/.wld 文件和可再次导入的 ZIP。国服单账号自动选择、多账号手动选择。同名在目标目录内忽略大小写，自动生成 `Vor (1).plr` 等名称，保留已有文件和存档内容；游戏里的名称可能仍相同。角色、世界列表显示文件名、大小和修改时间。单选导出原文件，多选导出按 Players/Worlds 分组的 ZIP；不处理 .bak 或地图探索等附属文件。
+内置资源按「国际服 / 国服」和「角色 / 世界」分类：国际服 4 个角色、2 个世界，国服 1 个世界、暂无内置角色。选择后绑定同服目标，国服单账号自动选择、多账号手动选择。手机文件先识别世界的 `relogic` / `xindong` 标记或工具箱 ZIP 来源信息；未知来源必须明确声明所属服，跨服混合或信息冲突整批拒绝。同名自动生成 `Vor (1).plr` 等名称，保留已有文件和存档内容。单选导出原文件，多选导出按 Players/Worlds 分组并附来源服、大小和 SHA-256 的 ZIP；不处理 .bak 或地图探索等附属文件。
 
-恢复备份会完整还原语言、音量、按键等设置；单纯切回英文应使用「切换到英文」。切换和恢复前均需要确认游戏已完全退出。
+异常恢复会还原语言、音量、按键等设置；日常切回英文使用「切换到英文」。切换和异常恢复前均需要确认游戏已完全退出。
 
 ## 构建与验证
 
@@ -29,7 +29,7 @@ $env:JAVA_HOME = 'D:\Program Files\Android\Android Studio\jbr'
 .\gradlew.bat :app:connectedDebugAndroidTest
 ```
 
-构建产物：`app/build/outputs/apk/debug/app-debug.apk`。本次验证记录见 [1.4 开发验证记录](docs/v1.4-development-validation.md)。
+构建产物：`app/build/outputs/apk/debug/app-debug.apk`。本次验证记录见 [1.6 开发验证记录](docs/v1.6-development-validation.md)。
 
 ## 数据与支持范围
 
@@ -39,10 +39,10 @@ $env:JAVA_HOME = 'D:\Program Files\Android\Android Studio\jbr'
 
 ## 代码职责
 
-- `domain`：严格 JSON 检查、中英语言修改、备份、存档命名与 ZIP 暂存。
+- `domain`：严格 JSON 检查、中英语言修改、备份、存档命名、所属服约束与 ZIP 暂存／来源信息校验。
 - `data`：Shizuku UserService、文件描述符访问、备份与会话存储；保留旧数据读取和 SAF 导出兼容。
-- `feature/chinese`：首页、游戏语言、备份和问题排查页面及 ViewModel。文件操作在 IO 线程串行执行，返回首页不会取消操作。
-- `feature/saves`：版本与账号选择、内置与手机文件导入、列表、多选导出及逐项结果。
+- `feature/chinese`：底部导航、首页、语言、统一帮助与异常恢复页面及 ViewModel。文件操作在 IO 线程串行执行，返回首页不会取消语言操作。
+- `feature/saves`：分服内置目录、目标记忆与重新核实、五步导入、未知来源声明、搜索／排序、同服跨分类多选导出、进度及逐项结果。页面往返保留分类、搜索、选择和当前导入步骤。
 
 ## 历史资料
 

@@ -48,6 +48,7 @@ class SaveManagementTest {
         exportSaves(remote, target, remote.list(target), output)
         val staged = SaveStager(temp.newFolder()).stage("backup.zip", output.inputStream())
         assertEquals(bytes.keys, staged.map { it.name }.toSet())
+        assertTrue(staged.all { it.edition == GameEdition.INTERNATIONAL && it.origin == SaveOrigin.BUNDLE })
         staged.forEach { assertArrayEquals(bytes.getValue(it.name), it.file.readBytes()) }
         val single = temp.newFile()
         exportSaves(remote, target, listOf(remote.list(target).first()), single)
