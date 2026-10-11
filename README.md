@@ -1,6 +1,6 @@
 # 泰拉瑞亚工具箱
 
-<img src="assets/branding/terraria-toolbox-logo.png" width="96" alt="泰拉瑞亚工具箱 Logo" />
+<img src="app/src/main/res/drawable-nodpi/terraria_toolbox_logo.png" width="96" alt="泰拉瑞亚工具箱 Logo" />
 
 Kotlin + Jetpack Compose 原生 Android 应用。当前为 **1.4 / versionCode 5**，通过 Shizuku 管理国服、国际服的角色与世界存档，并将国际服游戏语言切换为中文或英文。语言切换保留音量、按键等设置，并在每次切换前自动备份。
 
